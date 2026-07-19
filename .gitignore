@@ -1,0 +1,15 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Arduino IDE
+*.hex
+!extras/golden/*.hex
+build/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store

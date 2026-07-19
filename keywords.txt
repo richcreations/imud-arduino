@@ -1,0 +1,62 @@
+#######################################
+# Syntax Coloring Map for ImudClient
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+ImudClient	KEYWORD1
+ImudParser	KEYWORD1
+imud_packet_t	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+beginTCP	KEYWORD2
+beginUDP	KEYWORD2
+poll	KEYWORD2
+packet	KEYWORD2
+trueHeading	KEYWORD2
+connected	KEYWORD2
+reconnect	KEYWORD2
+setAutoReconnect	KEYWORD2
+millisSinceLastPacket	KEYWORD2
+daemonShutdown	KEYWORD2
+packetsReceived	KEYWORD2
+crcErrors	KEYWORD2
+resyncs	KEYWORD2
+end	KEYWORD2
+feed	KEYWORD2
+feedDatagram	KEYWORD2
+reset	KEYWORD2
+imud_true_heading	KEYWORD2
+
+#######################################
+# Instances (KEYWORD2)
+#######################################
+
+imud	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+IMUD_MAGIC	LITERAL1
+IMUD_VERSION	LITERAL1
+IMUD_PACKET_SIZE	LITERAL1
+IMUD_FLAG_MAG_VALID	LITERAL1
+IMUD_FLAG_MAG_SET_RESET	LITERAL1
+IMUD_FLAG_FUSION_CONVERGED	LITERAL1
+IMUD_FLAG_ACCEL_CAL	LITERAL1
+IMUD_FLAG_GYRO_CAL	LITERAL1
+IMUD_FLAG_MAG_CAL	LITERAL1
+IMUD_FLAG_MOTION	LITERAL1
+IMUD_FLAG_FIFO_OVERFLOW	LITERAL1
+IMUD_FLAG_STARTUP	LITERAL1
+IMUD_FLAG_SHUTDOWN	LITERAL1
+IMUD_FLAG_DECLINATION_VALID	LITERAL1
+IMUD_FLAG_HEAVE_VALID	LITERAL1
+IMUD_FLAG_WAVE_VALID	LITERAL1
+IMUD_FLAG_ENGINE_ON	LITERAL1
