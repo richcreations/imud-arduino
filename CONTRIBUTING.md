@@ -64,6 +64,29 @@ To try a sketch against a live (fake) server, see
   only proves it *compiles* for the listed boards, not that it behaves
   correctly against a real transport.
 
+## Known CI gaps
+
+- **RP2040 / Pico W isn't compiled in CI.** The plan for this library
+  originally targeted a PlatformIO board ID `rpipicow`, but as of writing
+  that ID doesn't exist in PlatformIO's official registry — only `pico`
+  (plain RP2040, no wireless chip) and `nanorp2040connect` (RP2040 with a
+  WiFiNINA module, a different API than `WiFi.h`) are available under the
+  `raspberrypi` platform. Neither represents the actual target (an
+  RP2040 board with a CYW43 chip running the Earle Philhower `arduino-pico`
+  core's `WiFi.h`-compatible stack), so rather than have CI "verify"
+  against the wrong hardware, this target is dropped from
+  `.github/workflows/ci.yml` until a real Pico W board definition is
+  available. `examples/*.ino` already branch on `ARDUINO_ARCH_RP2040` to
+  use `WiFi.h` there (matching that core's actual API), but this is
+  untested by CI — if you have real Pico W hardware, manual verification
+  and a PR restoring CI coverage (once a usable board ID exists) would be
+  very welcome.
+- Similarly, `d1_mini` (ESP8266) is compiled in CI but marked
+  best-effort/`continue-on-error` — the examples branch on `ESP8266` for
+  its differently-named `ESP8266WiFi.h` header and its 3-argument
+  `WiFiUDP::beginMulticast()`, but this core isn't exercised against real
+  hardware by anyone maintaining this library day-to-day.
+
 ## Wire-sync changes
 
 This library pins **wire v14** and intentionally rejects any other

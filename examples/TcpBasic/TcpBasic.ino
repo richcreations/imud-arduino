@@ -22,7 +22,15 @@
  * SPDX-License-Identifier: MIT
  */
 
+#if defined(ESP32)
 #include <WiFi.h>
+#elif defined(ESP8266)
+#include <ESP8266WiFi.h>
+#elif defined(ARDUINO_ARCH_RP2040)
+#include <WiFi.h>
+#else
+#error "This example needs a WiFi-capable core (ESP32, ESP8266, or RP2040 W)"
+#endif
 #include <ImudClient.h>
 
 const char *WIFI_SSID = "your-ssid";

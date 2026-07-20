@@ -23,7 +23,9 @@ imud 1.4, unchanged through 1.6).
 - `imud_true_heading()` helper, ported verbatim from imud's reference
   implementation, hardened against Inf/NaN/out-of-range wire data.
 - Examples: `TcpBasic` (WiFi + TCP, reconnect, staleness) and `UdpListen`
-  (multicast join, high-rate receive, achieved-rate reporting).
+  (multicast join, high-rate receive, achieved-rate reporting). Both
+  branch on `ESP32`/`ESP8266`/`ARDUINO_ARCH_RP2040` to pick the right WiFi
+  header and multicast-join signature per core.
 - Native unit test suite (`pio test -e native`, Unity) covering every
   golden vector in `extras/golden/`: exact field-value decode, byte-at-a-
   time and chunked feeding, bad-CRC rejection, version-mismatch rejection,

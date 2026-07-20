@@ -4,9 +4,13 @@
 #   no hardware, no mocks (see README.md, "Testing").
 # job 2 (compile-examples): compiles both example sketches against real
 #   boards with `pio ci`. esp32dev / esp32-s3-devkitc-1 / esp32-c3-devkitm-1
-#   are required; d1_mini (ESP8266) and rpipicow (RP2040) are best-effort
-#   (continue-on-error) since the library only guarantees the Arduino
-#   Client/UDP interfaces, not every third-party core's quirks.
+#   are required; d1_mini (ESP8266) is best-effort (continue-on-error) since
+#   the library only guarantees the Arduino Client/UDP interfaces, not every
+#   third-party core's quirks. RP2040 (Pico W) is NOT covered here: as of
+#   writing, PlatformIO's official registry has no Pico W board definition
+#   to target (only the wireless-less "pico" and the WiFiNINA-based
+#   "nanorp2040connect", neither of which represents the intended target) —
+#   see CONTRIBUTING.md.
 #
 # Copyright (c) 2026 Richard Simpson
 # SPDX-License-Identifier: MIT
@@ -50,8 +54,6 @@ jobs:
           - board: esp32-c3-devkitm-1
             best_effort: false
           - board: d1_mini
-            best_effort: true
-          - board: rpipicow
             best_effort: true
     steps:
       - uses: actions/checkout@v4

@@ -312,8 +312,11 @@ daemon-shutdown message.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the native test suite and
 compiles both examples against `esp32dev`, `esp32-s3-devkitc-1`, and
-`esp32-c3-devkitm-1` on every push/PR, plus best-effort builds for
-`d1_mini` (ESP8266) and `rpipicow` (RP2040 Pico W).
+`esp32-c3-devkitm-1` on every push/PR, plus a best-effort build for
+`d1_mini` (ESP8266). RP2040 (Pico W) isn't covered in CI — see
+[CONTRIBUTING.md's known CI gaps](CONTRIBUTING.md#known-ci-gaps) for why —
+but the library's `Client`/`UDP`-only design still targets it; it just
+isn't automatically verified.
 
 A separate workflow (`.github/workflows/codeql.yml`) runs CodeQL static
 analysis on push/PR and weekly: C/C++ over `ImudParser` (built via

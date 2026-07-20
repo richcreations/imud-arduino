@@ -18,7 +18,15 @@
  * SPDX-License-Identifier: MIT
  */
 
+#if defined(ESP32)
 #include <WiFi.h>
+#elif defined(ESP8266)
+#include <ESP8266WiFi.h>
+#elif defined(ARDUINO_ARCH_RP2040)
+#include <WiFi.h>
+#else
+#error "This example needs a WiFi-capable core (ESP32, ESP8266, or RP2040 W)"
+#endif
 #include <WiFiUdp.h>
 #include <ImudClient.h>
 
@@ -52,10 +60,15 @@ void setup() {
 
     // The abstract Arduino UDP class has no portable multicast join, so the
     // sketch joins first using the concrete WiFiUDP API, then hands the
-    // already-bound socket to ImudClient with alreadyBound=true. (ESP8266's
-    // WiFiUDP::beginMulticast takes an extra interface-address argument;
-    // adjust this line if porting to that core.)
-    if (!udp.beginMulticast(IMUD_MULTICAST_GROUP, IMUD_PORT)) {
+    // already-bound socket to ImudClient with alreadyBound=true. ESP8266's
+    // WiFiUDP::beginMulticast takes an extra interface-address argument
+    // (its own IP) that ESP32/RP2040 don't need.
+#if defined(ESP8266)
+    bool joined = udp.beginMulticast(WiFi.localIP(), IMUD_MULTICAST_GROUP, IMUD_PORT);
+#else
+    bool joined = udp.beginMulticast(IMUD_MULTICAST_GROUP, IMUD_PORT);
+#endif
+    if (!joined) {
         Serial.println("Failed to join multicast group.");
     }
     imud.beginUDP(udp, IMUD_PORT, /*alreadyBound=*/true);
