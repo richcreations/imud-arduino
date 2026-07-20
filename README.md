@@ -315,6 +315,15 @@ compiles both examples against `esp32dev`, `esp32-s3-devkitc-1`, and
 `esp32-c3-devkitm-1` on every push/PR, plus best-effort builds for
 `d1_mini` (ESP8266) and `rpipicow` (RP2040 Pico W).
 
+A separate workflow (`.github/workflows/codeql.yml`) runs CodeQL static
+analysis on push/PR and weekly: C/C++ over `ImudParser` (built via
+`pio test -e native --without-testing`, the same native target the unit
+tests use — this is what lets CodeQL trace real compiler invocations for a
+header-only library with no top-level build system) and Python over
+`tools/fake_daemon.py`. This is an "advanced setup" workflow, not GitHub's
+default code-scanning autobuild — the default fails outright here since
+there's nothing for it to autodetect.
+
 ## Wire-sync warning
 
 This library pins **wire v14** and rejects any other version outright (see

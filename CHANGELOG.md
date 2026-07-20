@@ -31,6 +31,11 @@ imud 1.4, unchanged through 1.6).
 - CI (`.github/workflows/ci.yml`): native tests on every push/PR, plus
   example compilation for `esp32dev`, `esp32-s3-devkitc-1`, and
   `esp32-c3-devkitm-1` (best-effort `d1_mini` and `rpipicow`).
+- CodeQL code scanning (`.github/workflows/codeql.yml`): advanced-setup
+  workflow covering C/C++ (`ImudParser`, built via
+  `pio test -e native --without-testing` so CodeQL can trace real compiler
+  invocations for a header-only library) and Python (`tools/fake_daemon.py`),
+  on push/PR and weekly.
 - Documentation: this README's quick start and API reference, plus
   `docs/PROTOCOL.md` for the full field-by-field wire layout and a
   walkthrough of the resync algorithm.

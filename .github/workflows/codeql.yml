@@ -1,0 +1,81 @@
+# CodeQL code scanning for ImudClient
+#
+# Custom (advanced-setup) workflow, replacing GitHub's default code-scanning
+# setup — the default's autobuild step fails outright for this repo, since
+# src/ImudClient.h is header-only with no top-level build system for it to
+# autodetect.
+#
+# C/C++ analysis is scoped to the portable ImudParser core: the build step
+# runs `pio test -e native --without-testing`, the same native compile the
+# unit tests use (it compiles test/test_parser/test_parser.cpp, which
+# #includes ImudClient.h, without executing the test binary). CodeQL's
+# tracer hooks the compiler invocations that happen during that step.
+#
+# The ImudClient Arduino wrapper lives behind `#ifdef ARDUINO` and needs a
+# real board core to compile, which isn't worth dragging into a
+# security-scanning workflow — the CI workflow's `pio ci` matrix already
+# proves it compiles for real boards; this workflow is about static
+# analysis, not build coverage.
+#
+# NOTE: enabling this requires switching the repo from GitHub's "Default"
+# code-scanning setup to "Advanced" — see README/CONTRIBUTING or just push
+# this file; GitHub detects the custom workflow and offers to switch under
+# Settings -> Code security and analysis -> Code scanning.
+#
+# Copyright (c) 2026 Richard Simpson
+# SPDX-License-Identifier: MIT
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "24 7 * * 1" # weekly, Monday 07:24 UTC
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: python
+            build-mode: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Set up Python
+        if: matrix.build-mode == 'manual'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build (traced by CodeQL)
+        if: matrix.build-mode == 'manual'
+        run: |
+          pip install -U platformio
+          pio test -e native --without-testing
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
