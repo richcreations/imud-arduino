@@ -19,6 +19,16 @@ updates:
       interval: weekly
       day: monday
       time: "07:00"
+    # Without grouping, Dependabot opens one PR per action — five at once the
+    # first time it ran here, and it silently dropped a sixth (actions/cache)
+    # because open-pull-requests-limit was already saturated. Grouping puts
+    # every action bump in a single reviewable PR that CI validates as one
+    # unit, which is also how you actually want to test them: the workflows
+    # only ever run with all pins at their current values anyway.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
