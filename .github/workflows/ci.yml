@@ -89,7 +89,6 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
 
       - name: Cache PlatformIO
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -168,7 +167,6 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
 
       - name: Cache PlatformIO
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -200,11 +198,16 @@ jobs:
       fail-fast: false
       matrix:
         board:
+          # `platform` is PACKAGER:ARCHITECTURE (two parts); `fqbn` is
+          # PACKAGER:ARCHITECTURE:BOARD (three). Passing the FQBN where the
+          # platform name belongs makes the install step fail.
           - fqbn: esp32:esp32:esp32
+            platform: esp32:esp32
             name: esp32
             url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
             best_effort: false
           - fqbn: esp8266:esp8266:d1_mini
+            platform: esp8266:esp8266
             name: esp8266
             url: https://arduino.esp8266.com/stable/package_esp8266com_index.json
             best_effort: true
@@ -221,7 +224,7 @@ jobs:
         with:
           fqbn: ${{ matrix.board.fqbn }}
           platforms: |
-            - name: ${{ matrix.board.fqbn }}
+            - name: ${{ matrix.board.platform }}
               source-url: ${{ matrix.board.url }}
           libraries: |
             - source-path: ./
@@ -240,13 +243,21 @@ jobs:
         with:
           persist-credentials: false
 
-      # This library is published through the Arduino Library Manager, which
-      # enforces rules about library.properties, keywords.txt and the examples
-      # layout. Catch violations here rather than at submission time.
+      # The Arduino Library Manager enforces rules about library.properties,
+      # keywords.txt and the examples layout. Catch violations here rather
+      # than at submission time.
+      #
+      # `submit` is the correct mode while ImudClient is not yet in the
+      # Library Manager index: `update` asserts the library is ALREADY
+      # indexed and fails with LP018 ("Library name ImudClient not found in
+      # the Library Manager index") if it isn't. Switch this to `update`
+      # once the library has been accepted into the registry — that mode
+      # additionally enforces the rules about what may not change between
+      # releases, such as the library name.
       - name: Run Arduino Lint
         uses: arduino/arduino-lint-action@9a3603836c75e41753e531167395edeb90ba5dae # v3.0.0
         with:
-          library-manager: update
+          library-manager: submit
           compliance: strict
           project-type: library
 
