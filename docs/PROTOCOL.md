@@ -1,7 +1,7 @@
-# imud wire protocol v14 — field reference and parser internals
+# imud wire protocol v17 — field reference and parser internals
 
 This document is the deep-dive companion to the [README](../README.md)'s
-API reference: the full byte-level layout of the 260-byte packet, the flag
+API reference: the full byte-level layout of the 276-byte packet, the flag
 bitmask, the CRC32 definition, and a walkthrough of `ImudParser`'s
 stream-resync algorithm. It's aimed at anyone extending `ImudClient`,
 debugging a decode issue, or writing a second implementation against the
@@ -13,7 +13,7 @@ imud's own reference implementation — see the
 
 ## Framing
 
-- 260 bytes, fixed size, little-endian, naturally aligned (no implicit
+- 276 bytes, fixed size, little-endian, naturally aligned (no implicit
   padding — `__attribute__((packed))` in the struct definition is a guard
   against a future field breaking that, not a behavior change today).
 - Self-delimiting: a 4-byte magic (`"IMUD"`, `0x494D5544`, little-endian
@@ -28,7 +28,7 @@ imud's own reference implementation — see the
 | Offset | Size | Field | Type | Units / notes |
 |---:|---:|---|---|---|
 | 0 | 4 | `magic` | `uint32_t` | `IMUD_MAGIC` = `0x494D5544` |
-| 4 | 2 | `version` | `uint16_t` | `IMUD_VERSION` = 14; reject anything else |
+| 4 | 2 | `version` | `uint16_t` | `IMUD_VERSION` = 17; reject anything else |
 | 6 | 2 | `flags` | `uint16_t` | `IMUD_FLAG_*` bitmask, see below |
 | 8 | 8 | `ts_wall_ns` | `uint64_t` | `CLOCK_REALTIME`, nanoseconds |
 | 16 | 8 | `ts_tai_ns` | `uint64_t` | `CLOCK_TAI`, nanoseconds |
@@ -63,9 +63,35 @@ imud's own reference implementation — see the
 | 244 | 4 | `pitch_amplitude` | `float` | significant single amplitude 2σ(pitch), rad |
 | 248 | 4 | `mag_anomaly` | `float` | EMA of \|\|B\|−\|B_ref\|\|/\|B_ref\| (unitless) |
 | 252 | 4 | `mag_residual` | `float` | EMA of \|heading innovation\|, rad — compass health |
-| 256 | 4 | `crc32` | `uint32_t` | IEEE 802.3 CRC32 of bytes 0–255 |
+| 256 | 4 | `innov_weight` | `float` | EMA of the Huber weight √(γ/d²) applied to accepted updates; `1.0` = never capped, → `0.33` = sustained capping at the reject boundary |
+| 260 | 4 | `innov_reject` | `float` | EMA of the reject indicator: fraction of updates discarded by the gross-outlier gate; `0.0` = nothing rejected |
+| 264 | 4 | `nis_accel` | `float` | rolling normalised innovation squared for the accelerometer update, d²/2 |
+| 268 | 4 | `nis_mag` | `float` | same for the magnetometer update, d²/2 (3-D) or d²/1 (yaw-only) |
+| 272 | 4 | `crc32` | `uint32_t` | IEEE 802.3 CRC32 of bytes 0–271 |
 
-Total: 260 bytes.
+Total: 276 bytes.
+
+### Reading the gate-health and NIS fields
+
+The layout above tells you where these four live, but not how to interpret
+them, and the distinction matters:
+
+- `nis_accel` / `nis_mag` are normalised by effective degrees of freedom,
+  so **`1.0` means the filter's covariance correctly predicts its own
+  innovation spread**. Above 1 = over-confident; well below 1 = carrying
+  more uncertainty than it needs. Where `innov_weight`/`innov_reject`
+  report how hard the robustness machinery is working, these report
+  whether the noise model itself is right.
+- They are accumulated **before** the Huber cap and **include**
+  gate-rejected updates, so unlike `innov_weight` — which saturates once
+  the cap engages — they keep climbing as the model gets worse.
+- `nis_mag` reads **lower in 3-D magnetometer mode by design** when the
+  daemon's `mekf_mag_dip_sigma_deg` is non-zero: the dip channel is
+  deliberately trusted less. Do not compare `nis_mag` across magnetometer
+  modes, and do not treat a low value as a fault.
+- The time constant is ~30 s, so all four are slow-moving. Treat them as
+  health indicators, not per-packet signals — a single packet's value
+  says nothing on its own.
 
 ## Flags (`flags`, offset 6)
 
@@ -77,7 +103,7 @@ Total: 260 bytes.
 | 3 | `IMUD_FLAG_ACCEL_CAL` | accel calibration applied |
 | 4 | `IMUD_FLAG_GYRO_CAL` | gyro bias applied |
 | 5 | `IMUD_FLAG_MAG_CAL` | mag hard/soft-iron applied |
-| 6 | `IMUD_FLAG_MOTION` | reserved — never set in v14 |
+| 6 | `IMUD_FLAG_MOTION` | reserved — never set in v17 |
 | 7 | `IMUD_FLAG_FIFO_OVERFLOW` | sample gap (FIFO overflow) |
 | 8 | `IMUD_FLAG_STARTUP` | gyro bias estimation in progress |
 | 9 | `IMUD_FLAG_SHUTDOWN` | final packet before clean daemon exit |
@@ -92,11 +118,11 @@ Applied in this exact order — get it right and a malformed or truncated
 packet is rejected as cheaply as possible, without ever touching
 uninitialized or attacker-controlled memory beyond the buffer bounds:
 
-1. **Size** — exactly 260 bytes.
+1. **Size** — exactly 276 bytes.
 2. **Magic** — `magic == IMUD_MAGIC` (wire bytes `44 55 4D 49`).
-3. **Version** — `version == IMUD_VERSION` (14); reject anything else.
-4. **CRC32** — computed CRC32 of bytes 0..255 equals the stored `crc32` at
-   offset 256.
+3. **Version** — `version == IMUD_VERSION` (17); reject anything else.
+4. **CRC32** — computed CRC32 of bytes 0..271 equals the stored `crc32` at
+   offset 272.
 
 Anything that fails any step is discarded silently and counted (never
 logged per-packet — a malicious or malfunctioning peer flooding invalid
@@ -119,7 +145,7 @@ uint32_t imud_crc32(const uint8_t *data, size_t len) {
 }
 ```
 
-260 bytes at 240 MHz is on the order of microseconds, so a table isn't
+276 bytes at 240 MHz is on the order of microseconds, so a table isn't
 worth the ~1 KB of flash — this is deliberate, not an oversight; don't
 "optimize" it into a CRC library dependency.
 
@@ -135,8 +161,8 @@ receive path for, say, a serial bridge or a captured-frame file.
 
 The core loop:
 
-1. Append each incoming byte to a 260-byte accumulation buffer.
-2. When the buffer fills (260 bytes), validate it (the four steps above).
+1. Append each incoming byte to a 276-byte accumulation buffer.
+2. When the buffer fills (276 bytes), validate it (the four steps above).
    - **Valid** → copy it out as the newest packet, empty the buffer,
      continue.
    - **Invalid** → resync (next section), which leaves the buffer holding
@@ -165,15 +191,15 @@ Each call to this routine increments `resyncs()`, independent of
 
 ### Worked example: `extras/golden/resync_stream.hex`
 
-This 541-byte vector is built specifically to exercise the false-lock
+This 573-byte vector is built specifically to exercise the false-lock
 case: 21 bytes of garbage containing a **decoy** magic sequence at offset
-7 (followed by a plausible version, `0e 00` = 14, but garbage after that),
+7 (followed by a plausible version, `11 00` = 17, but garbage after that),
 then two genuinely valid frames back to back (`imu_seq` 1000 and 1001).
 
 Fed through `feed()` (whole, one byte at a time, or in any other
 chunking), the trace looks like:
 
-1. The buffer fills with stream bytes `[0..259]` — starts with garbage, so
+1. The buffer fills with stream bytes `[0..275]` — starts with garbage, so
    magic check fails at byte 0. Resync drops 1 byte, then finds the decoy
    magic (now at buffer offset 6) and discards everything before it.
 2. Accumulation continues; the buffer eventually holds the decoy magic

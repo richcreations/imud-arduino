@@ -1,6 +1,11 @@
 /*
  * TcpBasic.ino — connect to an imud daemon's TCP stream listener and print
- * attitude data.
+ * attitude data, with the error handling a real deployment needs.
+ *
+ * NEW HERE? Start with the HelloAttitude example instead — it is the same
+ * connect-and-print idea with nothing else in the way. Come back to this one
+ * once that works: it adds auto-reconnect, staleness detection, clean-shutdown
+ * handling, and the parser's error counters.
  *
  * The TCP path is lossless and framed: every valid packet the daemon sends
  * is delivered in order, with gaps in imu_seq only when the daemon itself
@@ -33,11 +38,17 @@
 #endif
 #include <ImudClient.h>
 
+/* ─────────────────── EDIT THESE FOUR LINES, THEN UPLOAD ───────────────────*/
+
 const char *WIFI_SSID = "your-ssid";
 const char *WIFI_PASSWORD = "your-password";
 
+/* The address of the machine running imud or fake_daemon.py — not your
+ * board's own address. See docs/GETTING-STARTED.md if you need to find it. */
 const char *IMUD_HOST = "192.168.1.50";  // fake_daemon.py / imud host
 const uint16_t IMUD_PORT = 10112;        // [stream] tcp_port, default 10112
+
+/* ──────────────────────────────────────────────────────────────────────────*/
 
 ImudClient imud;
 WiFiClient net;
@@ -89,15 +100,30 @@ void loop() {
             lastPrint = millis();
             float trueHdg = imud.trueHeading();  // -1.0f until declination valid
 
-            Serial.printf("seq=%-8lu hdg=%6.1f  roll=%6.1f  pitch=%6.1f  ",
+            // heading_deg is already degrees and is MAGNETIC (relative to
+            // magnetic north). roll/pitch/yaw are radians, hence the
+            // imud_rad_to_deg() calls. See docs/GLOSSARY.md.
+            Serial.printf("seq=%-8lu hdg=%6.1fdeg  roll=%6.1fdeg  "
+                          "pitch=%6.1fdeg  yaw=%6.1fdeg  ",
                           (unsigned long)p.imu_seq, p.heading_deg,
-                          p.roll * 57.29578f, p.pitch * 57.29578f);
+                          imud_rad_to_deg(p.roll), imud_rad_to_deg(p.pitch),
+                          imud_rad_to_deg(p.yaw));
 
+            // True (geographic) heading = magnetic heading + declination.
+            // Reads n/a until the daemon knows the local declination.
             if (trueHdg >= 0.0f)
-                Serial.printf("true_hdg=%6.1f  ", trueHdg);
+                Serial.printf("true_hdg=%6.1fdeg  ", trueHdg);
             else
                 Serial.print("true_hdg=   n/a  ");
 
+            // converged: the filter has settled — don't trust attitude before
+            //            this reads yes.
+            // crc_err:   packets that failed validation. A few during a
+            //            reconnect is normal; a steadily climbing count means
+            //            a genuinely bad link (or a wire-version mismatch).
+            // resyncs:   times the parser had to hunt for the next frame
+            //            boundary after a bad packet. Expect 0 on a healthy
+            //            TCP link; it rises alongside crc_err, not on its own.
             Serial.printf("converged=%s  pkts=%lu crc_err=%lu resyncs=%lu\n",
                           (p.flags & IMUD_FLAG_FUSION_CONVERGED) ? "yes" : "no ",
                           (unsigned long)imud.packetsReceived(),

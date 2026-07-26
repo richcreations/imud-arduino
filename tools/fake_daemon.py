@@ -2,7 +2,7 @@
 """fake_daemon.py — a fake imud server for client development. No hardware,
 no imud install needed; Python 3 stdlib only.
 
-Emits valid imud wire-v14 packets (260 bytes, little-endian, CRC32) with a
+Emits valid imud wire-v17 packets (276 bytes, little-endian, CRC32) with a
 slowly rotating heading, mimicking the real daemon's [stream] TCP listener
 and/or high-rate UDP output:
 
@@ -32,9 +32,9 @@ import time
 import zlib
 
 MAGIC = 0x494D5544
-VERSION = 14
-PACKET_SIZE = 260
-_STRUCT = struct.Struct('<IHHQQII' + 'f' * 37 + 'I' + 'f' * 18 + 'I')
+VERSION = 17
+PACKET_SIZE = 276
+_STRUCT = struct.Struct('<IHHQQII' + 'f' * 37 + 'I' + 'f' * 22 + 'I')
 assert _STRUCT.size == PACKET_SIZE
 
 FLAG_MAG_VALID = 1 << 0
@@ -63,8 +63,14 @@ def make_packet(seq: int, heading: float, flags: int) -> bytes:
     f[25] = heading         # heading_deg
     f[26] = 30.0            # rate_of_turn, deg/min (matches 0.5 deg/s sweep)
     f[27] = 25.5            # temp_c
-    tail = [0.0] * 18       # declination..mag_residual float run
+    tail = [0.0] * 22       # declination..nis_mag float run
     tail[0] = DECLINATION
+    # v17 gate-health/NIS block: the healthy case, so a consumer testing
+    # against this sees "filter fine", not a fault reading.
+    tail[18] = 1.0          # innov_weight — Huber cap never engaged
+    tail[19] = 0.0          # innov_reject — nothing gate-rejected
+    tail[20] = 1.0          # nis_accel — covariance consistent
+    tail[21] = 1.0          # nis_mag
     body = _STRUCT.pack(MAGIC, VERSION, flags, now, now + 37_000_000_000,
                         (seq * 400) & 0xFFFFFFFF, 1, *f, seq, *tail, 0)
     body = body[:PACKET_SIZE - 4]

@@ -1,8 +1,8 @@
 /*
  * ImudClient.h — Arduino client library for the imud IMU daemon
  *
- * Receives, validates, and decodes imud's 260-byte binary attitude packets
- * (wire v14) over TCP (lossless, framed) or UDP (unicast/broadcast/
+ * Receives, validates, and decodes imud's 276-byte binary attitude packets
+ * (wire v17) over TCP (lossless, framed) or UDP (unicast/broadcast/
  * multicast, higher rate). Works with any Arduino Client/UDP transport —
  * WiFiClient/WiFiUDP, EthernetClient/EthernetUDP, etc. ESP32 is the primary
  * target; the library also compiles for ESP8266, RP2040 (Pico W), and
@@ -34,7 +34,7 @@
  *
  * WIRE-SYNC WARNING
  *
- * This library pins wire v14 and rejects any other version. When imud
+ * This library pins wire v17 and rejects any other version. When imud
  * revises the packet layout it bumps the wire version, and this library
  * needs a synced struct + version update before it can talk to the new
  * daemon. See README.md for details.
@@ -63,11 +63,11 @@
  * ───────────────────────────────────────────────────────────────────────*/
 
 #define IMUD_MAGIC        0x494D5544u   /* "IMUD" */
-/* Wire-layout revision, NOT the release version. 14 = layout introduced in
- * imud 1.4, unchanged through 1.6. This library rejects any other value —
- * see the wire-sync warning above and in README.md. */
-#define IMUD_VERSION      14
-#define IMUD_PACKET_SIZE  260           /* bytes, fixed */
+/* Wire-layout revision, NOT the release version. 17 = layout introduced in
+ * imud 1.7. This library rejects any other value — see the wire-sync
+ * warning above and in README.md. */
+#define IMUD_VERSION      17
+#define IMUD_PACKET_SIZE  276           /* bytes, fixed */
 
 /* ─────────────────────────────────────────────────────────────────────────
  * Packet flags (bitmask in imud_packet_t.flags)
@@ -79,7 +79,7 @@
 #define IMUD_FLAG_ACCEL_CAL         (1u << 3)  /* accel calibration applied */
 #define IMUD_FLAG_GYRO_CAL          (1u << 4)  /* gyro bias applied */
 #define IMUD_FLAG_MAG_CAL           (1u << 5)  /* mag hard/soft-iron applied */
-#define IMUD_FLAG_MOTION            (1u << 6)  /* reserved — never set in v14 */
+#define IMUD_FLAG_MOTION            (1u << 6)  /* reserved — never set in v17 */
 #define IMUD_FLAG_FIFO_OVERFLOW     (1u << 7)  /* sample gap (FIFO overflow) */
 #define IMUD_FLAG_STARTUP           (1u << 8)  /* gyro bias est. in progress */
 #define IMUD_FLAG_SHUTDOWN          (1u << 9)  /* final packet before exit */
@@ -89,10 +89,10 @@
 #define IMUD_FLAG_ENGINE_ON         (1u << 13) /* engine-vibration detected */
 
 /* ─────────────────────────────────────────────────────────────────────────
- * Wire packet — 260 bytes, little-endian, fixed size.
+ * Wire packet — 276 bytes, little-endian, fixed size.
  *
  * WIRE-SYNC WARNING: this struct is copied verbatim from imud's reference
- * implementation for wire v14. imud pins this layout and only changes it on
+ * implementation for wire v17. imud pins this layout and only changes it on
  * a wire-version bump (see IMUD_VERSION above). Do not hand-edit field
  * order, types, or count without a corresponding version bump and a fresh
  * copy from the upstream reference — a mismatched struct silently decodes
@@ -169,7 +169,22 @@ typedef struct IMUD_PACKED_ATTR {
     float    pitch_amplitude; /* significant single amplitude 2σ(pitch), rad */
     float    mag_anomaly;     /* EMA of ||B|−|B_ref||/|B_ref| (unitless) */
     float    mag_residual;    /* EMA of |heading innovation|, rad */
-    uint32_t crc32;           /* IEEE 802.3 CRC32 of bytes 0–255 */
+    /* MEKF update-gate health and covariance consistency. All four are EMAs
+     * with a ~30 s time constant — slow health indicators, not per-packet
+     * signals. See docs/PROTOCOL.md for how to read them. */
+    float    innov_weight;    /* EMA of the Huber weight √(γ/d²) applied to
+                               * accepted updates; 1.0 = never capped,
+                               * → 0.33 = sustained capping at the reject
+                               * boundary */
+    float    innov_reject;    /* EMA of the reject indicator: fraction of
+                               * updates discarded by the gross-outlier
+                               * gate; 0.0 = nothing rejected */
+    float    nis_accel;       /* rolling normalised innovation squared for
+                               * the accelerometer update, d²/2; 1.0 = the
+                               * covariance predicts its own spread */
+    float    nis_mag;         /* same for the magnetometer update: d²/2
+                               * (3-D) or d²/1 (yaw-only) */
+    uint32_t crc32;           /* IEEE 802.3 CRC32 of bytes 0–271 */
 } imud_packet_t;
 
 #if defined(_MSC_VER)
@@ -183,7 +198,7 @@ static_assert(sizeof(imud_packet_t) == IMUD_PACKET_SIZE,
               "imud_packet_t mis-packed");
 
 /* ─────────────────────────────────────────────────────────────────────────
- * CRC32 — IEEE 802.3 / zlib polynomial, bitwise (no table: 260 bytes at
+ * CRC32 — IEEE 802.3 / zlib polynomial, bitwise (no table: 276 bytes at
  * 240 MHz is microseconds; deliberately not pulling in a CRC library).
  * ───────────────────────────────────────────────────────────────────────*/
 
@@ -221,6 +236,20 @@ inline float imud_true_heading(const imud_packet_t *pkt) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+ * imud_rad_to_deg — radians → degrees.
+ *
+ * imud sends pitch, roll and yaw in RADIANS (heading_deg is the exception —
+ * it is already degrees). Displays and humans generally want degrees, so
+ * this saves every sketch from open-coding the same magic constant:
+ *
+ *     Serial.println(imud_rad_to_deg(p.roll));   // e.g. -7.2
+ * ───────────────────────────────────────────────────────────────────────*/
+
+#define IMUD_RAD_TO_DEG   57.2957795f   /* 180/π */
+
+inline float imud_rad_to_deg(float rad) { return rad * IMUD_RAD_TO_DEG; }
+
+/* ─────────────────────────────────────────────────────────────────────────
  * ImudParser — pure C++, zero Arduino includes, zero I/O.
  *
  * Feed it raw bytes from any source (TCP stream, UDP datagram, a unit
@@ -237,7 +266,7 @@ public:
     }
 
     /* Feed raw stream bytes (any chunking — one byte at a time is fine).
-     * Reassembles 260-byte frames, validating each as it completes; on
+     * Reassembles 276-byte frames, validating each as it completes; on
      * failure, resynchronizes by dropping one byte and rescanning for the
      * next magic sequence rather than discarding the whole buffer, so a
      * valid frame that starts partway through never gets lost.
@@ -263,7 +292,7 @@ public:
     }
 
     /* Feed exactly one whole UDP datagram: no reassembly, no resync — a
-     * datagram is either a valid 260-byte packet or it is discarded.
+     * datagram is either a valid 276-byte packet or it is discarded.
      * Returns true if it was accepted; packet() then holds it. */
     bool feedDatagram(const uint8_t *data, size_t len) {
         if (!validate(data, len)) {
@@ -313,7 +342,7 @@ private:
         return imud_crc32(data, offsetof(imud_packet_t, crc32)) == stored;
     }
 
-    /* Called after a full 260-byte buffer fails validation. Drops exactly
+    /* Called after a full 276-byte buffer fails validation. Drops exactly
      * one byte, then scans the remaining buffer for the next magic
      * sequence, discarding everything before it. If no full match exists,
      * retains a trailing partial match (1-3 bytes) so a magic sequence

@@ -2,7 +2,7 @@
 #
 # job 1 (native-test): runs the ImudParser unit test suite on the host —
 #   no hardware, no mocks (see README.md, "Testing").
-# job 2 (compile-examples): compiles both example sketches against real
+# job 2 (compile-examples): compiles all three example sketches against real
 #   boards with `pio ci`. esp32dev / esp32-s3-devkitc-1 / esp32-c3-devkitm-1
 #   are required; d1_mini (ESP8266) is best-effort (continue-on-error) since
 #   the library only guarantees the Arduino Client/UDP interfaces, not every
@@ -64,6 +64,9 @@ jobs:
 
       - name: Install PlatformIO
         run: pip install -U platformio
+
+      - name: Compile HelloAttitude
+        run: pio ci examples/HelloAttitude/HelloAttitude.ino --lib="." --board=${{ matrix.board }}
 
       - name: Compile TcpBasic
         run: pio ci examples/TcpBasic/TcpBasic.ino --lib="." --board=${{ matrix.board }}

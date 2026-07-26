@@ -1,13 +1,21 @@
 /*
- * UdpListen.ino — join imud's high-rate UDP multicast stream and print the
- * achieved packet rate once per second.
+ * UdpListen.ino — join imud's high-rate UDP multicast stream, print attitude
+ * plus the achieved packet rate once per second.
+ *
+ * NEW HERE? Start with HelloAttitude, then TcpBasic. UDP is the harder
+ * transport to get working, because multicast has to survive your network.
  *
  * By default imud's [highrate] UDP output targets multicast 239.255.0.1:
  * 10111 at up to 500 Hz (enable `[highrate] enabled = true` in
  * /etc/imud/imud.conf). UDP is lossy — packets can be dropped, duplicated,
  * or reordered — so this example just keeps "the latest valid packet" and
- * reports throughput, which is the whole strategy §3 of README.md
- * recommends for this transport.
+ * reports throughput, which is the strategy the "Protocol semantics" section
+ * of README.md recommends for this transport.
+ *
+ * HEADS UP: many consumer WiFi access points silently drop or rate-limit
+ * multicast traffic. If the rate reads 0.0 Hz forever while TcpBasic works
+ * fine, that is the most likely cause — see docs/TROUBLESHOOTING.md, which
+ * covers testing with `--udp <your-board-ip>:10111` unicast instead.
  *
  * For a hardware-free test, point this at tools/fake_daemon.py running on
  * your dev machine:
@@ -30,11 +38,19 @@
 #include <WiFiUdp.h>
 #include <ImudClient.h>
 
+/* ─────────────────── EDIT THESE FOUR LINES, THEN UPLOAD ───────────────────*/
+
 const char *WIFI_SSID = "your-ssid";
 const char *WIFI_PASSWORD = "your-password";
 
+/* Unlike TcpBasic there is no host address here: multicast means the board
+ * subscribes to a GROUP that any sender on the network can publish to, so
+ * you never name the daemon's IP. These two defaults match imud's
+ * [highrate] section and usually need no change. */
 const IPAddress IMUD_MULTICAST_GROUP(239, 255, 0, 1);
 const uint16_t IMUD_PORT = 10111;
+
+/* ──────────────────────────────────────────────────────────────────────────*/
 
 ImudClient imud;
 WiFiUDP udp;
@@ -89,12 +105,27 @@ void loop() {
         uint32_t delta = total - packetsAtLastReport;
         float rateHz = delta * 1000.0f / (float)elapsed;
 
-        const imud_packet_t &p = imud.packet();
-        Serial.printf("rate=%5.1f Hz  seq=%-8lu hdg=%6.1f  total=%lu  "
-                      "crc_err=%lu  resyncs=%lu\n",
-                      rateHz, (unsigned long)p.imu_seq, p.heading_deg,
-                      (unsigned long)total, (unsigned long)imud.crcErrors(),
-                      (unsigned long)imud.resyncs());
+        if (total == 0) {
+            // Nothing has EVER arrived. Don't print packet() here: it is
+            // zero-initialized until the first valid packet lands, so it
+            // would show a convincing-looking hdg=0.0 that means nothing.
+            Serial.println("no packets yet -- is the daemon sending UDP? "
+                           "does your access point pass multicast? "
+                           "(see docs/TROUBLESHOOTING.md)");
+        } else {
+            const imud_packet_t &p = imud.packet();
+
+            // heading_deg is already degrees (and magnetic); pitch/roll/yaw
+            // are radians, so convert. See docs/GLOSSARY.md.
+            Serial.printf("rate=%5.1f Hz  seq=%-8lu hdg=%6.1fdeg  "
+                          "pitch=%6.1fdeg  roll=%6.1fdeg  yaw=%6.1fdeg  "
+                          "total=%lu  crc_err=%lu  resyncs=%lu\n",
+                          rateHz, (unsigned long)p.imu_seq, p.heading_deg,
+                          imud_rad_to_deg(p.pitch), imud_rad_to_deg(p.roll),
+                          imud_rad_to_deg(p.yaw),
+                          (unsigned long)total, (unsigned long)imud.crcErrors(),
+                          (unsigned long)imud.resyncs());
+        }
 
         packetsAtLastReport = total;
         lastReport = now;

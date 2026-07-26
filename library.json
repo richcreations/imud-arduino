@@ -1,7 +1,7 @@
 {
   "name": "ImudClient",
-  "version": "1.0.0",
-  "description": "Receive attitude data from the imud IMU daemon over TCP or UDP. Decodes and validates imud's 260-byte binary packets (wire v14): heading, roll, pitch, quaternion, rate of turn, heave and sea state. Works with any Arduino Client/UDP transport; ESP32 is the primary target.",
+  "version": "1.1.0",
+  "description": "Receive attitude data from the imud IMU daemon over TCP or UDP. Decodes and validates imud's 276-byte binary packets (wire v17): heading, roll, pitch, quaternion, rate of turn, heave, sea state and filter gate health. Requires imud 1.7 or newer; use the 1.0.x line for imud 1.4-1.6. Works with any Arduino Client/UDP transport; ESP32 is the primary target.",
   "keywords": ["imu", "ahrs", "marine", "navigation", "nmea", "esp32", "kalman", "attitude", "heading"],
   "authors": [
     {

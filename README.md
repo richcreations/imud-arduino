@@ -27,20 +27,33 @@ if (imud.poll())
 Primary target is **ESP32** (Arduino IDE and PlatformIO); the library also
 compiles for ESP8266, RP2040 (Pico W), and Ethernet-shield boards.
 
+> **New to this library? Start with
+> [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md).** It walks you from an
+> empty sketch to live heading, pitch and roll on your Serial Monitor —
+> without an IMU, without wiring anything, using the test server bundled in
+> `tools/`. The rest of this README is reference material.
+>
+> Unfamiliar terms? [docs/GLOSSARY.md](docs/GLOSSARY.md).
+> Something not working? [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
 ---
 
 ## Table of contents
 
+- [Getting started](docs/GETTING-STARTED.md) — beginner walkthrough
 - [Installation](#installation)
 - [Quick start](#quick-start)
   - [TCP](#tcp)
   - [UDP](#udp)
   - [UDP multicast](#udp-multicast)
+- [What's in a packet](#whats-in-a-packet)
 - [API reference](#api-reference)
 - [Protocol semantics](#protocol-semantics)
 - [Server contract (what the client tolerates)](#server-contract-what-the-client-tolerates)
 - [Enabling the real daemon's outputs](#enabling-the-real-daemons-outputs)
 - [Testing](#testing)
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — by symptom
+- [Glossary](docs/GLOSSARY.md) — NED, declination, heave, NIS…
 - [Wire-sync warning](#wire-sync-warning)
 - [Repository layout](#repository-layout)
 - [Contributing](#contributing)
@@ -80,6 +93,7 @@ ImudClient imud;
 WiFiClient net;
 
 void setup() {
+    Serial.begin(115200);          // set the Serial Monitor to 115200 too
     WiFi.begin("ssid", "password");
     while (WiFi.status() != WL_CONNECTED) delay(100);
 
@@ -89,8 +103,13 @@ void setup() {
 void loop() {
     if (imud.poll()) {                    // true = at least one NEW valid packet
         const imud_packet_t &p = imud.packet();
-        float trueHdg = imud.trueHeading();  // -1.0f until declination valid
-        // ... use p.heading_deg, p.roll, p.pitch, trueHdg, etc.
+
+        // heading_deg is already degrees (and magnetic);
+        // pitch/roll/yaw are radians, hence imud_rad_to_deg().
+        Serial.printf("heading %.1f  pitch %.1f  roll %.1f\n",
+                      p.heading_deg,
+                      imud_rad_to_deg(p.pitch),
+                      imud_rad_to_deg(p.roll));
     }
 }
 ```
@@ -122,7 +141,7 @@ void setup() {
 void loop() {
     if (imud.poll()) {
         const imud_packet_t &p = imud.packet();
-        // ...
+        Serial.println(p.heading_deg);
     }
 }
 ```
@@ -142,6 +161,85 @@ imud.beginUDP(udp, 10111, /*alreadyBound=*/true);
 
 See [examples/UdpListen](examples/UdpListen/UdpListen.ino) for a complete
 sketch that also reports the achieved packet rate.
+
+## What's in a packet
+
+Every packet carries the same full set of fields. Read them straight off the
+struct — `imud.packet().heading_deg` — there are no per-field accessors.
+
+**Watch the units:** `heading_deg` is degrees, but `pitch`, `roll` and `yaw`
+are **radians**. Convert with `imud_rad_to_deg()`.
+
+Fields marked "gated by" are only meaningful once that flag is set; before
+then they read `0.0`. Terms are defined in
+[docs/GLOSSARY.md](docs/GLOSSARY.md).
+
+### Attitude — what most sketches want
+
+| Field | Meaning | Units | Gated by |
+|---|---|---|---|
+| `heading_deg` | magnetic heading | degrees, 0–360 | — |
+| `trueHeading()` | true (geographic) heading; `-1.0f` if unknown | degrees, 0–360 | `DECLINATION_VALID` |
+| `pitch` | bow up (+) / down | **radians** | — |
+| `roll` | starboard up (+) / down | **radians** | — |
+| `yaw` | rotation about vertical, magnetic | **radians** | — |
+| `quat_w/x/y/z` | same orientation as a quaternion, body→NED | unit quaternion | — |
+| `rate_of_turn` | turn rate, + = turning right | **degrees/minute** | — |
+| `declination_deg` | local magnetic variation, + = east | degrees | `DECLINATION_VALID` |
+
+### Motion and sea state
+
+| Field | Meaning | Units | Gated by |
+|---|---|---|---|
+| `heave_m` | vertical displacement, + up | metres | `HEAVE_VALID` |
+| `heave_rate` | vertical velocity, + up | m/s | `HEAVE_VALID` |
+| `wave_height_m` | significant wave height (Hs) | metres | `WAVE_VALID` |
+| `wave_period_s` | mean zero-crossing wave period | seconds | `WAVE_VALID` |
+| `roll_period_s` / `pitch_period_s` | vessel roll / pitch period; `0.0` = not rolling | seconds | `WAVE_VALID` |
+| `roll_amplitude` / `pitch_amplitude` | significant single amplitude (2σ) | radians | `WAVE_VALID` |
+
+### Raw and calibrated sensors
+
+| Field | Meaning | Units |
+|---|---|---|
+| `accel_x/y/z` | acceleration, calibrated, [NED](docs/GLOSSARY.md#ned) | m/s² |
+| `gyro_x/y/z` | angular rate, bias-corrected | rad/s |
+| `mag_x/y/z` | magnetic field, calibrated | µT |
+| `accel_raw_*` / `gyro_raw_*` / `mag_raw_*` | the same before calibration | as above |
+| `gyro_bias_x/y/z` | estimated gyro bias | rad/s |
+| `temp_c` | IMU die temperature | °C |
+
+### Health and diagnostics
+
+| Field | Meaning | Good value |
+|---|---|---|
+| `flags` | `IMUD_FLAG_*` bitmask — see below | — |
+| `imu_seq` | monotonic sample counter; gaps = dropped samples | increments by 1 |
+| `cov[9]` | 3×3 attitude error covariance, row-major | smaller = more confident |
+| `mag_anomaly` | nearby-metal indicator | near `0.0` |
+| `mag_residual` | compass disagreement with the filter | near `0.0` |
+| `innov_weight` | how much the outlier cap is engaging | `1.0` |
+| `innov_reject` | fraction of updates discarded outright | `0.0` |
+| `nis_accel` / `nis_mag` | is the filter's confidence honest? | `1.0` |
+
+Frequently used flags — the full list is in
+[src/ImudClient.h](src/ImudClient.h):
+
+| Flag | Meaning |
+|---|---|
+| `IMUD_FLAG_FUSION_CONVERGED` | filter has settled — **don't trust attitude before this** |
+| `IMUD_FLAG_DECLINATION_VALID` | declination known; gates `trueHeading()` |
+| `IMUD_FLAG_MAG_VALID` | magnetometer healthy and calibrated |
+| `IMUD_FLAG_HEAVE_VALID` / `IMUD_FLAG_WAVE_VALID` | heave / sea-state estimators settled |
+| `IMUD_FLAG_SHUTDOWN` | daemon's final packet before a clean exit |
+
+```cpp
+if (p.flags & IMUD_FLAG_FUSION_CONVERGED)
+    display.show(p.heading_deg);
+```
+
+For byte offsets and the full 276-byte layout, see
+[docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## API reference
 
@@ -177,19 +275,22 @@ cover (e.g. a custom transport, or a file of captured frames).
 
 | Method | Description |
 |---|---|
-| `size_t feed(const uint8_t *data, size_t len)` | Streaming path (TCP): any chunking, one byte at a time is fine. Reassembles 260-byte frames and validates each as it completes; on failure, resynchronizes by dropping one byte and rescanning for the next magic sequence rather than discarding the whole buffer. Returns the count of **new** valid packets decoded this call. |
-| `bool feedDatagram(const uint8_t *data, size_t len)` | Datagram path (UDP): no reassembly, no resync — a datagram is either a valid 260-byte packet or it's discarded. |
+| `size_t feed(const uint8_t *data, size_t len)` | Streaming path (TCP): any chunking, one byte at a time is fine. Reassembles 276-byte frames and validates each as it completes; on failure, resynchronizes by dropping one byte and rescanning for the next magic sequence rather than discarding the whole buffer. Returns the count of **new** valid packets decoded this call. |
+| `bool feedDatagram(const uint8_t *data, size_t len)` | Datagram path (UDP): no reassembly, no resync — a datagram is either a valid 276-byte packet or it's discarded. |
 | `const imud_packet_t &packet() const` | Newest valid packet. |
 | `uint32_t packetsReceived() / crcErrors() / resyncs() const` | Same semantics as on `ImudClient`. |
 | `void reset()` | Drops the partial accumulation buffer and resets all counters. Does **not** clear `packet()`. |
 
 ### `imud_packet_t` and flags
 
-The full 260-byte wire struct (accel/gyro/mag, quaternion, pitch/roll/yaw,
-heading, rate of turn, covariance, heave, sea state, compass health, …) and
-the `IMUD_FLAG_*` bitmask are defined in `src/ImudClient.h`. See
-[docs/PROTOCOL.md](docs/PROTOCOL.md) for the full field-by-field reference,
-byte offsets, and the resync algorithm walkthrough.
+The full 276-byte wire struct (accel/gyro/mag, quaternion, pitch/roll/yaw,
+heading, rate of turn, covariance, heave, sea state, compass health, filter
+gate health, …) and
+the `IMUD_FLAG_*` bitmask are defined in `src/ImudClient.h`.
+
+See [What's in a packet](#whats-in-a-packet) above for a field-by-field
+table with units, or [docs/PROTOCOL.md](docs/PROTOCOL.md) for byte offsets
+and the resync algorithm walkthrough.
 
 ### `imud_true_heading()`
 
@@ -203,6 +304,19 @@ yet — or if the packet carries out-of-range values. Wire data is untrusted:
 a crafted packet with Inf/NaN/1e38 here must not hang the caller (this was
 found by fuzzing upstream), so the range check is written to fail closed on
 NaN too. Ported verbatim from imud's reference implementation.
+
+### `imud_rad_to_deg()`
+
+```cpp
+float imud_rad_to_deg(float rad);   // also: IMUD_RAD_TO_DEG
+```
+
+`pitch`, `roll` and `yaw` arrive in **radians**; `heading_deg` is the one
+attitude field already in degrees. This converts:
+
+```cpp
+Serial.println(imud_rad_to_deg(p.roll));   // e.g. -7.2
+```
 
 ## Protocol semantics
 
@@ -227,7 +341,7 @@ NaN too. Ported verbatim from imud's reference implementation.
 **TCP** (`[stream]` listener, default `:10112`, default 100 Hz):
 
 - Broadcast-only: the daemon never reads from a client connection and never
-  sends anything but whole 260-byte frames back-to-back. `ImudClient` never
+  sends anything but whole 276-byte frames back-to-back. `ImudClient` never
   writes to the connection.
 - Max 8 clients. A 9th connection is accepted, then immediately closed —
   **EOF right after connect means "server full."** `poll()`'s
@@ -246,7 +360,7 @@ NaN too. Ported verbatim from imud's reference implementation.
 
 **UDP** (default `:10111`, up to 500 Hz):
 
-- Every datagram is exactly one 260-byte packet; `ImudClient` drops
+- Every datagram is exactly one 276-byte packet; `ImudClient` drops
   oversized/undersized ones without reading them.
 - Default daemon destination is multicast `239.255.0.1` — see
   [UDP multicast](#udp-multicast) above for joining. Unicast and broadcast
@@ -329,7 +443,7 @@ there's nothing for it to autodetect.
 
 ## Wire-sync warning
 
-This library pins **wire v14** and rejects any other version outright (see
+This library pins **wire v17** and rejects any other version outright (see
 [Protocol semantics](#protocol-semantics) and `docs/PROTOCOL.md`). When
 imud revises its packet layout, it bumps the wire version — and this
 library needs a synced struct plus a version bump before it can talk to
@@ -347,14 +461,22 @@ imud-arduino/
   LICENSE                     # MIT
   src/ImudClient.h            # everything: ImudParser + ImudClient, header-only
   examples/
-    TcpBasic/TcpBasic.ino     # WiFi + TCP: heading/roll/pitch, true heading,
+    HelloAttitude/            # START HERE: connect + print heading/pitch/roll
+      HelloAttitude.ino
+    TcpBasic/TcpBasic.ino     # WiFi + TCP: heading/roll/pitch/yaw, true heading,
                               #   staleness, reconnect
     UdpListen/UdpListen.ino   # multicast join + high-rate receive, rate/counters
   test/
     test_parser/test_parser.cpp  # PlatformIO native env + Unity
   extras/golden/               # golden wire-format test vectors
-  tools/fake_daemon.py         # hardware-free test server (TCP+UDP, stdlib only)
-  docs/PROTOCOL.md             # full field reference + resync algorithm
+  tools/
+    fake_daemon.py             # hardware-free test server (TCP+UDP, stdlib only)
+    gen_vectors.py             # regenerates extras/golden/ for a new wire version
+  docs/
+    GETTING-STARTED.md         # beginner walkthrough, no hardware needed
+    TROUBLESHOOTING.md         # symptom-first problem solving
+    GLOSSARY.md                # NED, declination, heave, NIS, …
+    PROTOCOL.md                # full field reference + resync algorithm
   platformio.ini
   .github/workflows/ci.yml
 ```
