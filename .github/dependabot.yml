@@ -1,0 +1,27 @@
+# Dependabot for ImudClient
+#
+# The workflows pin actions to commit SHAs rather than tags, because a tag is
+# mutable — `@v4` re-decides who you trust on every run. Pinning trades that
+# for staleness, so Dependabot exists to close the loop: it proposes the new
+# SHA (with the version in the trailing comment updated) as a reviewable PR.
+#
+# Nothing else here has dependencies to track: the library is header-only
+# with no third-party code, and tools/ is Python stdlib only by design.
+#
+# Copyright (c) 2026 Richard Simpson
+# SPDX-License-Identifier: MIT
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - github-actions

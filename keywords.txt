@@ -33,6 +33,7 @@ feedDatagram	KEYWORD2
 reset	KEYWORD2
 imud_true_heading	KEYWORD2
 imud_rad_to_deg	KEYWORD2
+imud_crc32	KEYWORD2
 
 #######################################
 # Instances (KEYWORD2)

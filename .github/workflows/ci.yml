@@ -1,16 +1,31 @@
 # CI for ImudClient
 #
-# job 1 (native-test): runs the ImudParser unit test suite on the host —
-#   no hardware, no mocks (see README.md, "Testing").
-# job 2 (compile-examples): compiles all three example sketches against real
-#   boards with `pio ci`. esp32dev / esp32-s3-devkitc-1 / esp32-c3-devkitm-1
-#   are required; d1_mini (ESP8266) is best-effort (continue-on-error) since
-#   the library only guarantees the Arduino Client/UDP interfaces, not every
-#   third-party core's quirks. RP2040 (Pico W) is NOT covered here: as of
-#   writing, PlatformIO's official registry has no Pico W board definition
-#   to target (only the wireless-less "pico" and the WiFiNINA-based
-#   "nanorp2040connect", neither of which represents the intended target) —
-#   see CONTRIBUTING.md.
+# Jobs, roughly in order of how fast they tell you something useful:
+#
+#   repo-integrity   — cheap consistency checks that catch drift a green
+#                      build would otherwise hide (see tools/check_repo_integrity.py)
+#   native-test      — the Unity suite, plain and under ASan/UBSan
+#   portability      — the header compiled -Werror across compilers, C++
+#                      standards and 32/64-bit, since board cores vary
+#   compile-examples — every example against real boards via `pio ci`
+#   arduino-cli      — the same examples through the Arduino IDE toolchain,
+#                      which is a different compiler driver than PlatformIO
+#   arduino-lint     — Library Manager compliance (manifest, keywords, layout)
+#   python-lint      — tools/*.py
+#
+# Fuzzing lives in fuzz.yml (short on PRs, long nightly).
+#
+# esp32dev / esp32-s3-devkitc-1 / esp32-c3-devkitm-1 are required; d1_mini
+# (ESP8266) is best-effort (continue-on-error) since the library only
+# guarantees the Arduino Client/UDP interfaces, not every third-party core's
+# quirks. RP2040 (Pico W) is NOT covered: as of writing, PlatformIO's
+# official registry has no Pico W board definition to target (only the
+# wireless-less "pico" and the WiFiNINA-based "nanorp2040connect", neither of
+# which represents the intended target) — see CONTRIBUTING.md.
+#
+# Actions are pinned to commit SHAs rather than tags: a tag is mutable, so
+# `@v4` is a supply-chain trust decision renewed on every run. Dependabot
+# (.github/dependabot.yml) proposes updates with the new SHA.
 #
 # Copyright (c) 2026 Richard Simpson
 # SPDX-License-Identifier: MIT
@@ -22,26 +37,116 @@ on:
     branches: [main]
   pull_request:
 
-jobs:
-  native-test:
-    name: Native unit tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+# The default GITHUB_TOKEN is broader than anything here needs.
+permissions:
+  contents: read
 
-      - uses: actions/setup-python@v5
+# A new push to a PR makes the in-flight run obsolete; don't pay for it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  repo-integrity:
+    name: Repository integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.x"
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Verifies: every example is actually compiled by this workflow;
+      # library.properties / library.json / CHANGELOG agree on the version;
+      # the byte arrays in the test file still match extras/golden/*.hex;
+      # keywords.txt covers the public API; every doc link resolves.
+      - name: Check repository consistency
+        run: python3 tools/check_repo_integrity.py
+
+  native-test:
+    name: Native tests (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # `native` is the plain build; `native-asan` re-runs the same suite
+        # under ASan/UBSan with -Werror and ImudParser's internal index
+        # assertions enabled. Sanitizers change codegen, so both are useful.
+        env: [native, native-asan]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Cache PlatformIO
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
 
       - name: Install PlatformIO
-        run: pip install -U platformio
+        run: pip install --upgrade platformio
 
-      - name: Run native tests
-        run: pio test -e native
+      - name: Run tests
+        run: pio test -e ${{ matrix.env }}
+
+  portability:
+    name: Portability (${{ matrix.cc }}, ${{ matrix.std }}, ${{ matrix.bits }}-bit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Board cores ship different compilers and standards, and every real
+        # target is 32-bit. -Werror here means a warning that only appears in
+        # one combination fails CI instead of reaching a user.
+        cc: [g++, clang++]
+        std: [c++11, c++14, c++17]
+        bits: [64]
+        include:
+          - cc: g++
+            std: c++14
+            bits: 32
+          - cc: g++
+            std: c++20
+            bits: 64
+          - cc: clang++
+            std: c++20
+            bits: 64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install 32-bit toolchain
+        if: matrix.bits == 32
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib g++-multilib
+
+      - name: Compile and run
+        run: |
+          ${{ matrix.cc }} -std=${{ matrix.std }} -m${{ matrix.bits }} \
+            -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror \
+            -Isrc -o compile_check test/portability/compile_check.cpp
+          ./compile_check
 
   compile-examples:
-    name: Compile examples (${{ matrix.board }})
+    name: PlatformIO (${{ matrix.board }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     continue-on-error: ${{ matrix.best_effort }}
     strategy:
       fail-fast: false
@@ -56,15 +161,27 @@ jobs:
           - board: d1_mini
             best_effort: true
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.x"
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Cache PlatformIO
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ matrix.board }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-${{ matrix.board }}-
 
       - name: Install PlatformIO
-        run: pip install -U platformio
+        run: pip install --upgrade platformio
 
+      # NOTE: examples are listed explicitly, not globbed. The repo-integrity
+      # job fails the build if a sketch exists that has no step here.
       - name: Compile HelloAttitude
         run: pio ci examples/HelloAttitude/HelloAttitude.ino --lib="." --board=${{ matrix.board }}
 
@@ -73,3 +190,85 @@ jobs:
 
       - name: Compile UdpListen
         run: pio ci examples/UdpListen/UdpListen.ino --lib="." --board=${{ matrix.board }}
+
+  arduino-cli:
+    name: Arduino IDE toolchain (${{ matrix.board.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.board.best_effort }}
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - fqbn: esp32:esp32:esp32
+            name: esp32
+            url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+            best_effort: false
+          - fqbn: esp8266:esp8266:d1_mini
+            name: esp8266
+            url: https://arduino.esp8266.com/stable/package_esp8266com_index.json
+            best_effort: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # README documents Arduino IDE installation, but PlatformIO was the only
+      # toolchain CI ever exercised. This closes that gap: arduino-cli uses a
+      # different compiler driver and library-resolution path.
+      - name: Compile all examples
+        uses: arduino/compile-sketches@d7af6619a62e765d91f0a4d65b40cf061537a15d # v1.1.3
+        with:
+          fqbn: ${{ matrix.board.fqbn }}
+          platforms: |
+            - name: ${{ matrix.board.fqbn }}
+              source-url: ${{ matrix.board.url }}
+          libraries: |
+            - source-path: ./
+          sketch-paths: |
+            - examples/HelloAttitude
+            - examples/TcpBasic
+            - examples/UdpListen
+          enable-warnings-report: true
+
+  arduino-lint:
+    name: Arduino Library Manager compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # This library is published through the Arduino Library Manager, which
+      # enforces rules about library.properties, keywords.txt and the examples
+      # layout. Catch violations here rather than at submission time.
+      - name: Run Arduino Lint
+        uses: arduino/arduino-lint-action@9a3603836c75e41753e531167395edeb90ba5dae # v3.0.0
+        with:
+          library-manager: update
+          compliance: strict
+          project-type: library
+
+  python-lint:
+    name: Python lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: pip install ruff
+
+      # tools/ ships to users as the hardware-free test server and the golden
+      # vector generator; both are stdlib-only and should stay clean.
+      - name: Lint and syntax-check tools/
+        run: |
+          ruff check tools/
+          python3 -m compileall -q tools/

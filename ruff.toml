@@ -1,0 +1,36 @@
+# ruff configuration for tools/
+#
+# Deliberately narrow. The point of linting here is to catch things that are
+# actually wrong — undefined names, unused imports, shadowed builtins, the
+# mutable-default-argument class of bug — not to enforce a house style on two
+# stdlib-only scripts.
+#
+# In particular the default rule set objects to the implicit string
+# concatenation in gen_vectors.py's write_md(), where each list element is one
+# line of generated Markdown. That formatting is intentional and clearer than
+# the alternative, so those rules stay off rather than the code being bent to
+# satisfy them.
+#
+# Copyright (c) 2026 Richard Simpson
+# SPDX-License-Identifier: MIT
+
+line-length = 100
+target-version = "py38"
+
+[lint]
+select = [
+    "E9",  # syntax / IO errors
+    "F",   # pyflakes: undefined names, unused imports and variables
+    "B",   # bugbear: mutable defaults, unused loop vars, silent bugs
+    "EXE", # shebang present without the executable bit, and vice versa
+    "S",   # bandit: obvious security smells
+]
+ignore = [
+    "S101", # asserts are the intended failure mode in gen_vectors.py
+    "S104", # binding 0.0.0.0 is the whole point of the test server
+    "S310", # no urlopen use; keeps the rule from firing on future edits
+]
+
+[lint.per-file-ignores]
+# The test server deliberately binds broadly and speaks to arbitrary hosts.
+"tools/fake_daemon.py" = ["S104"]

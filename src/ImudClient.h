@@ -58,6 +58,33 @@
 # error "imud's binary wire format requires a little-endian target"
 #endif
 
+/* Internal invariant check. Compiled out to nothing by default, so the
+ * embedded build gets zero cost, zero code size and no <cassert>/abort()
+ * dependency. CI's sanitizer and fuzz builds define it to a real trap.
+ *
+ * This exists because AddressSanitizer alone cannot catch an overflow of
+ * ImudParser::buf_: that array is followed by padding to the alignment of
+ * the next member, so a small overrun is an *intra-object* write into slack
+ * space — not a heap or stack violation, and invisible to ASan (and to
+ * -fsanitize-address-field-padding, which skips standard-layout classes).
+ * Asserting the index invariant directly is what makes that class of bug
+ * detectable by the fuzzer.
+ *
+ * Build test/CI binaries with -DIMUD_ENABLE_ASSERTS to switch it on; define
+ * IMUD_ASSERT yourself beforehand to route it somewhere else. */
+#ifndef IMUD_ASSERT
+#  if defined(IMUD_ENABLE_ASSERTS)
+#    if defined(__GNUC__) || defined(__clang__)
+#      define IMUD_ASSERT(cond) do { if (!(cond)) __builtin_trap(); } while (0)
+#    else
+#      include <stdlib.h>
+#      define IMUD_ASSERT(cond) do { if (!(cond)) abort(); } while (0)
+#    endif
+#  else
+#    define IMUD_ASSERT(cond) ((void)0)
+#  endif
+#endif
+
 /* ─────────────────────────────────────────────────────────────────────────
  * Protocol constants
  * ───────────────────────────────────────────────────────────────────────*/
@@ -275,6 +302,9 @@ public:
     size_t feed(const uint8_t *data, size_t len) {
         size_t newCount = 0;
         for (size_t i = 0; i < len; i++) {
+            /* Invariant: every path out of resyncScan() leaves fill_ below
+             * IMUD_PACKET_SIZE, so this write is always in bounds. */
+            IMUD_ASSERT(fill_ < IMUD_PACKET_SIZE);
             buf_[fill_++] = data[i];
             if (fill_ == IMUD_PACKET_SIZE) {
                 if (validate(buf_, IMUD_PACKET_SIZE)) {

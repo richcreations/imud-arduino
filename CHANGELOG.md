@@ -74,6 +74,25 @@ the frame length before it could validate it, on a stream whose framing
 - `CONTRIBUTING.md` now states the actual versioning policy: a wire bump is
   a **minor** release, with major reserved for large feature or structural
   changes. It previously called for a major bump on every wire change.
+- CI is substantially hardened. New coverage: continuous fuzzing of
+  `ImudParser` (60 s per PR, 15 min nightly, seeded from the golden
+  vectors); the unit suite re-run under ASan/UBSan with `-Werror`; a
+  portability matrix compiling the header across gcc/clang, C++11–20 and
+  32/64-bit with `-Wconversion -Werror`; example compilation through the
+  Arduino IDE toolchain as well as PlatformIO; Arduino Library Manager
+  compliance linting; and `tools/check_repo_integrity.py`, which fails the
+  build on the kinds of drift that otherwise produce a green one — an
+  example no job compiles, a version disagreement between the two manifests
+  and the changelog, test byte-arrays that no longer match
+  `extras/golden/*.hex`, a public symbol missing from `keywords.txt`, or a
+  broken documentation link. Workflows now set least-privilege
+  `permissions`, cancel superseded runs, bound every job with a timeout, and
+  pin actions to commit SHAs with Dependabot to update them.
+- `IMUD_ASSERT` / `IMUD_ENABLE_ASSERTS` — an internal invariant hook that
+  compiles to nothing unless explicitly enabled, so the embedded build is
+  byte-for-byte unchanged. Test and fuzz builds enable it. This is what makes
+  a `buf_` index bug detectable at all: that array is followed by padding, so
+  a small overrun is an intra-object write that AddressSanitizer cannot see.
 
 ## [1.0.0] - 2026-07-19
 

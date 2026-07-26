@@ -1,0 +1,177 @@
+# Fuzzing for ImudParser
+#
+# ImudParser consumes untrusted bytes straight off a network socket, which is
+# the textbook case for fuzzing. Upstream already found a real bug in this
+# code's lineage this way — the Inf/NaN hardening in imud_true_heading()
+# exists because of it.
+#
+# Two cadences:
+#   pull_request / push  — 60 s smoke run, just enough to catch an obvious
+#                          regression without slowing the merge loop
+#   schedule (nightly)   — 15 min per sanitizer config, seeded with the
+#                          accumulated corpus, which is where anything deep
+#                          actually gets found
+#
+# WHY THE ASSERTS MATTER: ImudParser::buf_ is followed by padding to the
+# alignment of the next member, so a small overrun of it is an *intra-object*
+# write into slack space. AddressSanitizer cannot see that, and
+# -fsanitize-address-field-padding skips standard-layout classes. Building
+# with -DIMUD_ENABLE_ASSERTS turns the buffer-index invariant into a real
+# trap, which is what makes that whole bug class reachable by the fuzzer.
+# Without it a planted off-by-one in resyncScan() runs clean.
+#
+# Copyright (c) 2026 Richard Simpson
+# SPDX-License-Identifier: MIT
+
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *" # nightly, 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Fuzzing seconds per config"
+        required: false
+        default: "900"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel the nightly run; do cancel superseded PR runs.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  fuzz:
+    name: libFuzzer (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    # Generous ceiling: the step itself is time-boxed by -max_total_time, so
+    # this only fires if something genuinely hangs.
+    timeout-minutes: 45
+    # MSan reports uninitialised reads only if *everything* linked in is
+    # instrumented, and the runner's libstdc++/libFuzzer are not. Its findings
+    # are worth reading but not worth blocking on, so it is advisory like
+    # d1_mini is in ci.yml. address/undefined stay blocking.
+    continue-on-error: ${{ matrix.sanitizer == 'memory' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # address+undefined finds memory and UB; memory (MSan) finds reads of
+        # uninitialised data, which the others cannot. Nightly only for MSan —
+        # it is the slowest and the most prone to needing instrumented deps.
+        sanitizer: [address, undefined]
+        include:
+          - sanitizer: memory
+            nightly_only: true
+    steps:
+      - name: Skip MSan outside the nightly run
+        if: matrix.nightly_only && github.event_name == 'pull_request'
+        run: echo "SKIP=1" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: env.SKIP != '1'
+        with:
+          persist-credentials: false
+
+      - name: Decide duration
+        if: env.SKIP != '1'
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] || \
+             [ "${{ github.event_name }}" = "push" ]; then
+            echo "DURATION=60" >> "$GITHUB_ENV"
+          else
+            echo "DURATION=${{ github.event.inputs.duration || '900' }}" >> "$GITHUB_ENV"
+          fi
+
+      # Seeds are the golden wire vectors plus the structural edge cases in
+      # test/fuzz/corpus. This is not optional: a 32-bit CRC is not reachable
+      # by random mutation, so without valid seeds the fuzzer would only ever
+      # exercise the reject paths and never the accept path or the state that
+      # follows a successful decode.
+      - name: Build seed corpus
+        if: env.SKIP != '1'
+        run: |
+          mkdir -p corpus
+          python3 - <<'PY'
+          import pathlib
+          out = pathlib.Path("corpus")
+          n = 0
+          for src in (pathlib.Path("extras/golden"), pathlib.Path("test/fuzz/corpus")):
+              for p in sorted(src.glob("*.hex")):
+                  raw = bytes.fromhex("".join(p.read_text().split()))
+                  # extras/golden vectors are bare streams; the harness eats
+                  # byte 0 as its chunk-size selector, so prepend one.
+                  if src.name == "golden":
+                      raw = b"\x11" + raw
+                  (out / f"{src.name}_{p.stem}.bin").write_bytes(raw)
+                  n += 1
+          print(f"seeded {n} inputs")
+          PY
+          ls -l corpus
+
+      - name: Build fuzz target
+        if: env.SKIP != '1'
+        run: |
+          FLAGS="-fsanitize=fuzzer,${{ matrix.sanitizer }}"
+          if [ "${{ matrix.sanitizer }}" = "address" ]; then
+            FLAGS="-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all"
+          fi
+          clang++ -std=c++14 -g -O1 -fno-omit-frame-pointer \
+            $FLAGS -DIMUD_ENABLE_ASSERTS \
+            -Wall -Wextra -Werror \
+            -Isrc -o fuzz_parser test/fuzz/fuzz_parser.cpp
+
+      # Replaying the committed corpus first means a regression that a seed
+      # already covers fails immediately and deterministically, instead of
+      # depending on the fuzzer rediscovering it within the time budget.
+      - name: Replay seed corpus (deterministic regression gate)
+        if: env.SKIP != '1'
+        run: ./fuzz_parser corpus/ -runs=0
+
+      - name: Fuzz for ${{ env.DURATION }}s
+        if: env.SKIP != '1'
+        run: |
+          ./fuzz_parser corpus/ \
+            -max_total_time=${{ env.DURATION }} \
+            -max_len=4096 \
+            -timeout=25 \
+            -rss_limit_mb=2048 \
+            -print_final_stats=1
+
+      # crash-*/leak-*/timeout-* land in the working directory. Uploading them
+      # is the whole point: the input IS the bug report, and it drops straight
+      # into test/fuzz/corpus/ as a permanent regression case.
+      - name: Collect crashers
+        if: failure() && env.SKIP != '1'
+        run: |
+          mkdir -p crashes
+          cp crash-* leak-* timeout-* oom-* crashes/ 2>/dev/null || true
+          for f in crashes/*; do
+            [ -e "$f" ] || continue
+            echo "=== $f ==="
+            xxd "$f" | head -40
+          done
+
+      - name: Upload crashers
+        if: failure() && env.SKIP != '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-crashes-${{ matrix.sanitizer }}-${{ github.run_id }}
+          path: crashes/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # The nightly run explores far beyond the seeds; keeping what it found
+      # interesting lets the next night start where this one left off.
+      - name: Upload evolved corpus
+        if: github.event_name == 'schedule' && env.SKIP != '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-corpus-${{ matrix.sanitizer }}
+          path: corpus/
+          retention-days: 14
