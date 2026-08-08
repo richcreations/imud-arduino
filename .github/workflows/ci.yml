@@ -247,17 +247,24 @@ jobs:
       # keywords.txt and the examples layout. Catch violations here rather
       # than at submission time.
       #
-      # `submit` is the correct mode while ImudClient is not yet in the
-      # Library Manager index: `update` asserts the library is ALREADY
-      # indexed and fails with LP018 ("Library name ImudClient not found in
-      # the Library Manager index") if it isn't. Switch this to `update`
-      # once the library has been accepted into the registry — that mode
-      # additionally enforces the rules about what may not change between
-      # releases, such as the library name.
+      # ImudClient was accepted into the Library Manager index on
+      # 2026-07-26, so `update` is now the correct mode. The two are not
+      # interchangeable and each fails loudly in the other's situation:
+      #
+      #   submit — asserts the name is FREE. Once indexed it fails with
+      #            LP017 ("Library name ImudClient is in use by a library in
+      #            the Library Manager index").
+      #   update — asserts the library IS indexed, and additionally enforces
+      #            the rules about what may not change between releases
+      #            (notably the library name). Before indexing it failed with
+      #            LP018 ("... not found in the Library Manager index").
+      #
+      # Do not switch back. Renaming the library would now break every
+      # existing installation, which is exactly what update mode guards.
       - name: Run Arduino Lint
         uses: arduino/arduino-lint-action@9a3603836c75e41753e531167395edeb90ba5dae # v3.0.0
         with:
-          library-manager: submit
+          library-manager: update
           compliance: strict
           project-type: library
 
