@@ -63,11 +63,23 @@ compiles for ESP8266, RP2040 (Pico W), and Ethernet-shield boards.
 
 ### Arduino IDE
 
+1. **Tools → Manage Libraries…** (or Sketch → Include Library → Manage
+   Libraries…).
+2. Search for **ImudClient** and click Install.
+3. `#include <ImudClient.h>` in your sketch.
+
+The examples then appear under **File → Examples → ImudClient**; start with
+`HelloAttitude`.
+
+<details>
+<summary>Installing manually instead (unreleased versions, or a fork)</summary>
+
 1. Download this repository as a ZIP (or `git clone` it into your Arduino
    `libraries/` folder).
-2. Sketch → Include Library → Add .ZIP Library... (or just restart the IDE
+2. Sketch → Include Library → Add .ZIP Library… (or just restart the IDE
    if you cloned directly into `libraries/`).
-3. `#include <ImudClient.h>` in your sketch.
+
+</details>
 
 ### PlatformIO
 

@@ -1,0 +1,55 @@
+# Publish the project page to GitHub Pages.
+#
+# Served layout (https://richcreations.github.io/imud-arduino/):
+#   /            ← web/
+#
+# One-time setup: Settings → Pages → Source = GitHub Actions.
+#
+# The page is hand-written static HTML with no build step and no external
+# requests, so this workflow only uploads web/ and deploys it.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two Pages deploys race; let an in-flight one finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sanity-check the site tree
+        run: |
+          set -euo pipefail
+          test -f web/index.html || { echo "::error::web/index.html is missing" >&2; exit 1; }
+          echo "==> site tree:"
+          find web -type f | sort
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

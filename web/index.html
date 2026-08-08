@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ImudClient — Arduino/ESP32 client for the imud IMU daemon</title>
+<meta name="description" content="Header-only Arduino library for ESP32. Receives heading, pitch, roll, quaternion, heave and sea state from the imud IMU daemon over TCP or UDP. No heap.">
+<meta name="author" content="Richard Simpson">
+<link rel="canonical" href="https://richcreations.github.io/imud-arduino/">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ImudClient">
+<meta property="og:title" content="ImudClient — Arduino/ESP32 client for imud">
+<meta property="og:description" content="Header-only library that receives, validates and decodes imud's binary attitude packets on ESP32-class boards, over TCP or UDP. No heap, no String, ~600 B RAM.">
+<meta property="og:url" content="https://richcreations.github.io/imud-arduino/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="ImudClient — Arduino/ESP32 client for imud">
+<meta name="twitter:description" content="Heading, pitch, roll, quaternion, heave and sea state on an ESP32, straight from the imud daemon over TCP or UDP.">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "ImudClient",
+  "description": "Header-only Arduino client library for imud, an IMU daemon for marine and robotics navigation. Receives, validates and decodes imud's 276-byte binary attitude packets (wire v17) over TCP or UDP on ESP32-class boards, exposing heading, roll, pitch, quaternion, rate of turn, heave and sea state. Uses no heap, no String and no exceptions, in about 600 bytes of RAM.",
+  "codeRepository": "https://github.com/richcreations/imud-arduino",
+  "programmingLanguage": "C++",
+  "runtimePlatform": "Arduino, ESP32, ESP8266, RP2040",
+  "license": "https://opensource.org/licenses/MIT",
+  "version": "1.1.0",
+  "url": "https://richcreations.github.io/imud-arduino/",
+  "author": {
+    "@type": "Person",
+    "name": "Richard Simpson"
+  },
+  "targetProduct": {
+    "@type": "SoftwareApplication",
+    "name": "imud",
+    "url": "https://richcreations.github.io/imud/",
+    "operatingSystem": "Linux"
+  }
+}
+</script>
+
+<style>
+  :root {
+    --bg: #fbfbf9; --fg: #1a1a1a; --muted: #5a5a5a; --bold: #000000;
+    --code-bg: #f1f1ee; --border: #dedcd6; --rule: #c9c7c0; --accent: #0b6bcb;
+    --warn: #b06000;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --fg: #e6e6e6; --muted: #9a9a9a; --bold: #ffffff;
+      --code-bg: #1f2023; --border: #303237; --rule: #3a3d43; --accent: #5ba7f0;
+      --warn: #e0a458;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 1.75rem 1.25rem 2.5rem;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                 "Liberation Mono", monospace;
+    font-size: clamp(13px, 2.7vw, 15px);
+    line-height: 1.55;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  main { max-width: 78ch; margin: 0 auto; }
+
+  /* ---- running header / footer bars ---- */
+  .bar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 1rem;
+    color: var(--muted);
+    font-weight: 700;
+    letter-spacing: .04em;
+    font-size: .95em;
+  }
+  .bar :nth-child(2) { text-align: center; }
+  .bar :nth-child(3) { text-align: right; }
+  .bar span { white-space: nowrap; }
+  .bar.top    { border-bottom: 1px solid var(--rule); padding-bottom: .5rem; margin-bottom: 2rem; }
+  .bar.bottom { border-top: 1px solid var(--rule); padding-top: .5rem; margin-top: 2.75rem; }
+
+  /* ---- section heads + indented body ---- */
+  h2 {
+    font-size: 1em;
+    font-weight: 700;
+    letter-spacing: .08em;
+    color: var(--bold);
+    text-transform: uppercase;
+    margin: 2.25rem 0 .6rem;
+  }
+  .body { padding-left: 5ch; }
+
+  h1 { font-size: 1em; font-weight: 700; color: var(--bold); margin: 0; }
+  p  { margin: .75rem 0; }
+  a  { color: var(--accent); text-underline-offset: 2px; }
+  strong, b { color: var(--bold); font-weight: 700; }
+
+  /* ---- .TP-style hanging-indent rows ---- */
+  dl { margin: .75rem 0; }
+  dt { font-weight: 700; color: var(--bold); margin-top: .9rem; }
+  dt:first-child { margin-top: 0; }
+  dd { margin: .15rem 0 0 4ch; }
+
+  ul { margin: .6rem 0; padding-left: 2.5ch; }
+  li { margin: .3rem 0; }
+
+  /* ---- code ---- */
+  .scroll { overflow-x: auto; margin: 1rem 0; }
+  pre {
+    margin: 0;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .85rem 1rem;
+    font-size: .9em;
+    line-height: 1.5;
+    min-width: min-content;
+  }
+  code { font-family: inherit; }
+  .cmt { color: var(--muted); }
+
+  .note {
+    border-left: 3px solid var(--accent);
+    padding: .1rem 0 .1rem 1rem;
+    color: var(--muted);
+    margin: 1.25rem 0;
+  }
+  .note.warn { border-left-color: var(--warn); }
+  .note.warn strong { color: var(--warn); }
+
+  /* ---- table ---- */
+  .scroll table { border-collapse: collapse; width: 100%; min-width: 34rem; }
+  th, td {
+    text-align: left;
+    padding: .4rem .8rem .4rem 0;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--muted); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: .85em; }
+
+  @media (max-width: 40rem) {
+    .body { padding-left: 2ch; }
+    dd { margin-left: 2ch; }
+    .bar { grid-template-columns: 1fr auto; font-size: .85em; }
+    .bar :nth-child(2) { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<div class="bar top">
+  <span>IMUDCLIENT(3)</span>
+  <span>Arduino Library Manual</span>
+  <span>IMUDCLIENT(3)</span>
+</div>
+
+<h2>Name</h2>
+<div class="body">
+  <h1>ImudClient — Arduino/ESP32 client library for the imud IMU daemon</h1>
+  <p>Heading, pitch, roll, quaternion, heave and sea state on a
+  microcontroller, straight off the network.</p>
+</div>
+
+<h2>Synopsis</h2>
+<div class="body">
+  <div class="scroll"><pre><code>#include &lt;WiFi.h&gt;
+#include &lt;ImudClient.h&gt;
+
+ImudClient imud;
+WiFiClient net;
+
+void setup() {
+    Serial.begin(115200);
+    WiFi.begin("ssid", "password");
+    while (WiFi.status() != WL_CONNECTED) delay(100);
+
+    imud.beginTCP(net, "192.168.1.50", 10112);
+}
+
+void loop() {
+    if (imud.poll()) {                    <span class="cmt">// a NEW valid packet arrived</span>
+        const imud_packet_t &amp;p = imud.packet();
+        Serial.printf("heading %.1f  pitch %.1f  roll %.1f\n",
+                      p.heading_deg,
+                      imud_rad_to_deg(p.pitch),
+                      imud_rad_to_deg(p.roll));
+    }
+}</code></pre></div>
+</div>
+
+<h2>Description</h2>
+<div class="body">
+  <p><strong>ImudClient</strong> is a header-only Arduino library that
+  receives, validates, and decodes the binary attitude packets published by
+  <a href="https://richcreations.github.io/imud/">imud</a> — an IMU daemon for
+  marine and robotics navigation that fuses gyro, accelerometer, and
+  magnetometer data with a Kalman filter and publishes the result over the
+  network.</p>
+
+  <p>The daemon does the sensor work on a Linux host. The microcontroller just
+  reads the answer. That makes it a practical way to build cockpit displays,
+  NMEA gauges, autopilot remotes, and telemetry heads that need live attitude
+  without carrying an IMU or a filter of their own.</p>
+
+  <dl>
+    <dt>Both transports, one packet.</dt>
+    <dd>TCP on port 10112 — lossless, framed, up to 8 concurrent clients — or
+    UDP on port 10111, unicast, broadcast, or multicast, at up to 500 Hz.</dd>
+
+    <dt>No heap, no <code>String</code>, no exceptions.</dt>
+    <dd>Fixed buffers only, roughly 600 bytes of RAM.</dd>
+
+    <dt>Header-only.</dt>
+    <dd>Drop in <code>src/ImudClient.h</code> and
+    <code>#include &lt;ImudClient.h&gt;</code>. Nothing to build or link.</dd>
+
+    <dt>Portable core.</dt>
+    <dd>The parser depends only on the C++ standard library and is unit-tested
+    on a host PC — no Arduino, no mocks. The Arduino wrapper touches only the
+    abstract <code>Client</code> and <code>UDP</code> base classes, so it works
+    with <code>WiFiClient</code>/<code>WiFiUDP</code>,
+    <code>EthernetClient</code>/<code>EthernetUDP</code>, or anything else
+    implementing those interfaces.</dd>
+
+    <dt>Hostile-input hardened.</dt>
+    <dd>Wire data is untrusted. Packets are validated on magic, version, size,
+    and CRC; the range checks fail closed on NaN and infinities, and the
+    streaming path resynchronizes by rescanning for the next magic sequence
+    rather than discarding its buffer.</dd>
+  </dl>
+</div>
+
+<h2>Requirements</h2>
+<div class="body">
+  <div class="note warn">
+    <strong>Match the versions.</strong> ImudClient <strong>1.1.0</strong>
+    speaks imud wire&nbsp;v17 and requires <strong>imud 1.7 or newer</strong>.
+    The <strong>1.0.x</strong> line is the correct one for imud 1.4–1.6. They
+    are not interchangeable, and a mismatch fails <em>silently</em>: the parser
+    rejects every packet whose version word it does not recognise, so you get
+    no data and no error — just a <code>millisSinceLastPacket()</code> that
+    climbs forever. If a sketch connects but never receives, check this
+    first.
+  </div>
+
+  <p>There is deliberately no dual-version support. The CRC offset moved
+  between v14 and v17, so a parser would have to guess a frame's length before
+  it could validate it — on a stream where the framing <em>is</em> the
+  validation.</p>
+
+  <p><strong>Boards.</strong> ESP32 is the primary target, under both the
+  Arduino IDE and PlatformIO. The library also compiles for ESP8266, RP2040
+  (Pico W), and Ethernet-shield boards.</p>
+</div>
+
+<h2>Installation</h2>
+<div class="body">
+  <p><strong>Arduino IDE.</strong> Tools → Manage Libraries…, search for
+  <strong>ImudClient</strong>, and click Install. The examples then appear
+  under File → Examples → ImudClient; start with
+  <code>HelloAttitude</code>.</p>
+
+  <p><strong>PlatformIO.</strong> Add the repository to
+  <code>platformio.ini</code>:</p>
+
+  <div class="scroll"><pre><code>lib_deps =
+    https://github.com/richcreations/imud-arduino.git</code></pre></div>
+
+  <p>To install an unreleased version or a fork, download the repository as a
+  ZIP and use Sketch → Include Library → Add .ZIP Library…, or clone straight
+  into your Arduino <code>libraries/</code> folder.</p>
+</div>
+
+<h2>Transports</h2>
+<div class="body">
+  <dl>
+    <dt>TCP — <code>beginTCP(net, host, 10112)</code></dt>
+    <dd>Lossless, framed, ordered, up to 8 concurrent clients. The right choice
+    for a display that needs every update. The initial connect is allowed to
+    fail — auto-reconnect takes over, throttled to one attempt every 2
+    seconds.</dd>
+
+    <dt>UDP — <code>beginUDP(udp, 10111)</code></dt>
+    <dd>Higher rate, up to 500 Hz, unicast or broadcast. Binding is all that is
+    needed; <code>beginUDP()</code> calls <code>udp.begin()</code> for you.</dd>
+
+    <dt>UDP multicast</dt>
+    <dd>imud's default high-rate destination is <code>239.255.0.1</code>. The
+    abstract Arduino <code>UDP</code> class has no portable multicast join, so
+    join with the concrete transport's own API first, then hand over the
+    already-bound socket:</dd>
+  </dl>
+
+  <div class="scroll"><pre><code>WiFiUDP udp;
+udp.beginMulticast(IPAddress(239, 255, 0, 1), 10111);   <span class="cmt">// ESP32 API</span>
+imud.beginUDP(udp, 10111, /*alreadyBound=*/true);</code></pre></div>
+</div>
+
+<h2>What's in a packet</h2>
+<div class="body">
+  <p>Every packet carries the same full set of fields, read straight off the
+  struct — <code>imud.packet().heading_deg</code>. There are no per-field
+  accessors.</p>
+
+  <div class="note warn">
+    <strong>Watch the units.</strong> <code>heading_deg</code> is in degrees,
+    but <code>pitch</code>, <code>roll</code>, and <code>yaw</code> are in
+    <strong>radians</strong>. Convert with <code>imud_rad_to_deg()</code>.
+    Rate of turn is in degrees per <em>minute</em>.
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Field</th><th>Meaning</th><th>Units</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>heading_deg</code></td><td>magnetic heading</td><td>degrees, 0–360</td></tr>
+        <tr><td><code>trueHeading()</code></td><td>true heading; <code>-1.0f</code> if unknown</td><td>degrees, 0–360</td></tr>
+        <tr><td><code>pitch</code> / <code>roll</code> / <code>yaw</code></td><td>bow up +, starboard up +</td><td><strong>radians</strong></td></tr>
+        <tr><td><code>quat_w/x/y/z</code></td><td>same orientation, body→NED</td><td>unit quaternion</td></tr>
+        <tr><td><code>rate_of_turn</code></td><td>turn rate, + = right</td><td>degrees/minute</td></tr>
+        <tr><td><code>declination_deg</code></td><td>magnetic variation, + = east</td><td>degrees</td></tr>
+        <tr><td><code>heave_m</code> / <code>heave_rate</code></td><td>vertical displacement / velocity, + up</td><td>m, m/s</td></tr>
+        <tr><td><code>wave_height_m</code></td><td>significant wave height (Hs)</td><td>metres</td></tr>
+        <tr><td><code>wave_period_s</code></td><td>mean zero-crossing wave period</td><td>seconds</td></tr>
+        <tr><td><code>roll_period_s</code> / <code>pitch_period_s</code></td><td>vessel periods; <code>0.0</code> = not rolling</td><td>seconds</td></tr>
+        <tr><td><code>accel_*</code> / <code>gyro_*</code> / <code>mag_*</code></td><td>calibrated sensors, NED; <code>*_raw_*</code> before calibration</td><td>m/s², rad/s, µT</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Some fields are gated by a validity flag and read <code>0.0</code> until
+  it is set — heave by <code>HEAVE_VALID</code>, sea state by
+  <code>WAVE_VALID</code>, true heading and declination by
+  <code>DECLINATION_VALID</code>. The full 276-byte struct and the
+  <code>IMUD_FLAG_*</code> bitmask are defined in
+  <code>src/ImudClient.h</code>.</p>
+</div>
+
+<h2>Interface</h2>
+<div class="body">
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Method</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>beginTCP(c, host, port)</code></td><td>Stores host/port for reconnects. A failed initial connect is fine.</td></tr>
+        <tr><td><code>beginUDP(u, port, alreadyBound)</code></td><td>Binds unless <code>alreadyBound</code>; pass <code>true</code> for multicast.</td></tr>
+        <tr><td><code>poll()</code></td><td>Non-blocking drain. <code>true</code> if ≥1 <em>new</em> valid packet arrived.</td></tr>
+        <tr><td><code>packet()</code></td><td>The newest valid packet; zero-initialized before the first.</td></tr>
+        <tr><td><code>trueHeading()</code></td><td>True heading, or <code>-1.0f</code> until declination is valid.</td></tr>
+        <tr><td><code>connected()</code></td><td>TCP link state; always <code>true</code> on UDP after <code>beginUDP()</code>.</td></tr>
+        <tr><td><code>reconnect()</code></td><td>TCP only. Blocks, as <code>Client::connect()</code> does.</td></tr>
+        <tr><td><code>setAutoReconnect(on)</code></td><td>Default on, ≥2 s between attempts. Turn off in latency-critical loops.</td></tr>
+        <tr><td><code>millisSinceLastPacket()</code></td><td>For watchdogs and staleness indicators; <code>UINT32_MAX</code> before the first.</td></tr>
+        <tr><td><code>daemonShutdown()</code></td><td><code>true</code> on the daemon's final packet — a clean exit, not a dropped link.</td></tr>
+        <tr><td><code>packetsReceived()</code> / <code>crcErrors()</code> / <code>resyncs()</code></td><td>Cumulative counters.</td></tr>
+        <tr><td><code>end()</code></td><td>Stops the transport, resets the parser and counters.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Power users can use <code>ImudParser</code> directly — pure C++, zero
+  Arduino includes, zero I/O. It is what <code>ImudClient</code> wraps, and
+  what the host-side unit tests exercise. Use it to decode packets from a
+  transport the wrapper does not cover, or from a file of captured frames.</p>
+</div>
+
+<h2>Examples</h2>
+<div class="body">
+  <dl>
+    <dt><code>HelloAttitude</code></dt>
+    <dd>The smallest sketch that prints live heading, pitch, and roll.</dd>
+    <dt><code>TcpBasic</code></dt>
+    <dd>A complete TCP sketch with staleness detection, reconnect handling, and
+    daemon-shutdown reporting.</dd>
+    <dt><code>UdpListen</code></dt>
+    <dd>UDP reception that also reports the achieved packet rate.</dd>
+  </dl>
+
+  <p>You do not need an IMU, or any wiring, to try these. The repository ships
+  a test server in <code>tools/</code> that feeds a sketch synthetic packets
+  from a PC — the
+  <a href="https://github.com/richcreations/imud-arduino/blob/main/docs/GETTING-STARTED.md">getting-started
+  guide</a> walks from an empty sketch to live attitude on the Serial Monitor
+  using it.</p>
+</div>
+
+<h2>See also</h2>
+<div class="body">
+  <ul>
+    <li><a href="https://github.com/richcreations/imud-arduino">Source on GitHub</a>
+        — the library, examples, and tests.</li>
+    <li><a href="https://github.com/richcreations/imud-arduino/blob/main/docs/GETTING-STARTED.md">Getting started</a>
+        — beginner walkthrough, no hardware required.</li>
+    <li><a href="https://github.com/richcreations/imud-arduino/blob/main/docs/PROTOCOL.md">Protocol</a>
+        — byte offsets and the resync algorithm.</li>
+    <li><a href="https://github.com/richcreations/imud-arduino/blob/main/docs/GLOSSARY.md">Glossary</a>
+        — NED, declination, heave, NIS, and friends.</li>
+    <li><a href="https://github.com/richcreations/imud-arduino/blob/main/docs/TROUBLESHOOTING.md">Troubleshooting</a>
+        — organised by symptom.</li>
+    <li><a href="https://richcreations.github.io/imud/">imud</a>
+        — the daemon this library talks to, and its Debian packages.</li>
+  </ul>
+</div>
+
+<h2>Author</h2>
+<div class="body">
+  <p>Written by Richard Simpson. Released under the
+  <a href="https://github.com/richcreations/imud-arduino/blob/main/LICENSE">MIT
+  license</a>.</p>
+</div>
+
+<div class="bar bottom">
+  <span>ImudClient 1.1.0</span>
+  <span>2026-07-26</span>
+  <span>IMUDCLIENT(3)</span>
+</div>
+
+</main>
+</body>
+</html>

@@ -35,10 +35,12 @@ New terms (declination, NED, quaternion…) are defined in
 
 **Arduino IDE**
 
-1. Download this repository as a ZIP (green "Code" button → Download ZIP).
-2. In the IDE: **Sketch → Include Library → Add .ZIP Library…** and pick the
-   file you just downloaded.
-3. Restart the IDE.
+1. Open **Tools → Manage Libraries…**
+2. Type `ImudClient` in the search box.
+3. Click **Install**.
+
+That's it — no ZIP files, no restart. The examples appear immediately under
+**File → Examples → ImudClient**.
 
 **PlatformIO**
 
