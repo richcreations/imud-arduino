@@ -117,7 +117,12 @@
 #define IMUD_FLAG_HEAVE_VALID       (1u << 11) /* heave estimator settled */
 #define IMUD_FLAG_WAVE_VALID        (1u << 12) /* sea-state stats settled */
 #define IMUD_FLAG_ENGINE_ON         (1u << 13) /* engine-vibration detected */
-/* Bit 14 is assigned upstream but has no meaning published to this library. */
+/* The MEKF found a non-finite value in its own state and reset itself.
+ * LATCHED from the reset until the filter next converges, not a per-packet
+ * pulse — at up to 500 Hz a momentary bit is invisible to a 1 Hz consumer.
+ * While it is set the attitude is valid but re-aligning, and
+ * IMUD_FLAG_FUSION_CONVERGED is clear for the same span. */
+#define IMUD_FLAG_STATE_RESET       (1u << 14)
 #define IMUD_FLAG_MAG_UNCAL         (1u << 15) /* heading fused from an
                                                 * UNCALIBRATED mag: offset by
                                                 * uncorrected hard iron, but

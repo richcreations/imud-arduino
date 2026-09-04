@@ -245,6 +245,7 @@ Frequently used flags — the full list is in
 | `IMUD_FLAG_MAG_VALID` | magnetometer healthy and calibrated |
 | `IMUD_FLAG_MAG_UNCAL` | heading from an **uncalibrated** mag: offset by hard iron, but bounded and repeatable. Mutually exclusive with `MAG_VALID` |
 | `IMUD_FLAG_HEAVE_VALID` / `IMUD_FLAG_WAVE_VALID` | heave / sea-state estimators settled |
+| `IMUD_FLAG_STATE_RESET` | the filter hit a non-finite state and reset; latched until it reconverges, so attitude is valid but re-aligning |
 | `IMUD_FLAG_SHUTDOWN` | daemon's final packet before a clean exit |
 
 ```cpp

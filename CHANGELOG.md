@@ -45,6 +45,12 @@ validation.
   working against a newer daemon.
 - `reserved` (`uint8[8]`, offset 276) — zero on the wire; do not interpret.
   Covered by the CRC.
+- `IMUD_FLAG_STATE_RESET` (bit 14 of `flags`) — the MEKF found a non-finite
+  value in its own state and reset itself. **Latched** from the reset until
+  the filter next converges rather than pulsed for one packet, because at up
+  to 500 Hz a momentary bit is invisible to a 1 Hz consumer. While it is set
+  the attitude is valid but re-aligning, and `FUSION_CONVERGED` is clear for
+  the same span.
 - `IMUD_FLAG_MAG_UNCAL` (bit 15 of `flags`, added upstream in imud 1.9.1) —
   heading fused from an **uncalibrated** magnetometer: offset by the
   uncorrected hard iron, but bounded and repeatable, unlike a gyro-only
@@ -75,7 +81,12 @@ validation.
 - `IMUD_FLAG_MOTION` (bit 6) stays defined and unused. v18 was the one
   moment it could have been reused safely, and deliberately was not,
   because imud 1.8 published that it would not be.
-- Golden vectors in `extras/golden/` regenerated for v18.
+- Golden vectors in `extras/golden/` regenerated for v18, round-tripped
+  through imud's reference Python client as usual. The fuzz seed corpus
+  gains `daemon_encoded_v18.hex`, a packet from the daemon's own C encoder
+  (mirrored from imud's `test/fuzz/corpus/packet/valid_v18.bin`) — a second
+  accept-path seed from a different implementation than the one that
+  generates the golden vectors.
 - `tools/fake_daemon.py` emits v18 packets.
 - No breaking API change: there are no per-field accessors, so consumers
   read `imud.packet().flags_ext` directly.

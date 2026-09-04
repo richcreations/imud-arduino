@@ -558,9 +558,11 @@ static void test_flags_ext_is_independent_of_flags(void) {
     TEST_ASSERT_TRUE(p.packet().flags_ext & IMUD_FLAG_EXT_MAG_ABSENT);
 }
 
-/* MAG_UNCAL is bit 15 of the 16-bit `flags` word — the bit whose
- * assignment exhausted it and forced flags_ext to exist. */
+/* The two flags this library was missing: STATE_RESET (bit 14) and
+ * MAG_UNCAL (bit 15) — whose assignment exhausted the 16-bit `flags` word
+ * and forced flags_ext to exist. */
 static void test_mag_uncal_flag_decodes(void) {
+    TEST_ASSERT_EQUAL_HEX16(0x4000, IMUD_FLAG_STATE_RESET);
     TEST_ASSERT_EQUAL_HEX16(0x8000, IMUD_FLAG_MAG_UNCAL);
 
     uint8_t pkt[IMUD_PACKET_SIZE];
@@ -572,6 +574,14 @@ static void test_mag_uncal_flag_decodes(void) {
     TEST_ASSERT_EQUAL_UINT32(1, p.feed(pkt, sizeof(pkt)));
     TEST_ASSERT_TRUE(p.packet().flags & IMUD_FLAG_MAG_UNCAL);
     TEST_ASSERT_FALSE(p.packet().flags & IMUD_FLAG_MAG_VALID);
+
+    /* STATE_RESET is latched alongside FUSION_CONVERGED being clear: the
+     * filter is re-aligning, so attitude is valid but unconverged. */
+    buildWithFlags(pkt, (uint16_t)IMUD_FLAG_STATE_RESET, 0);
+    ImudParser q;
+    TEST_ASSERT_EQUAL_UINT32(1, q.feed(pkt, sizeof(pkt)));
+    TEST_ASSERT_TRUE(q.packet().flags & IMUD_FLAG_STATE_RESET);
+    TEST_ASSERT_FALSE(q.packet().flags & IMUD_FLAG_FUSION_CONVERGED);
 }
 
 /* The v18 CRC covers bytes 0..283, so the appended fields are protected.

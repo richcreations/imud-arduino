@@ -117,7 +117,7 @@ them, and the distinction matters:
 | 11 | `IMUD_FLAG_HEAVE_VALID` | heave estimator settled — gates `heave_m`/`heave_rate` |
 | 12 | `IMUD_FLAG_WAVE_VALID` | sea-state stats settled — gates `wave_*`/`roll_*`/`pitch_*` (period/amplitude) |
 | 13 | `IMUD_FLAG_ENGINE_ON` | engine-vibration detected |
-| 14 | — | assigned upstream; no meaning published to this library |
+| 14 | `IMUD_FLAG_STATE_RESET` | the MEKF found a non-finite value in its own state and reset itself. **Latched** from the reset until the filter next converges, not a per-packet pulse — at up to 500 Hz a momentary bit is invisible to a 1 Hz consumer. While it is set the attitude is valid but re-aligning, and `FUSION_CONVERGED` is clear for the same span |
 | 15 | `IMUD_FLAG_MAG_UNCAL` | heading fused from an **uncalibrated** magnetometer — offset by the uncorrected hard iron, but bounded and repeatable. Mutually exclusive with `MAG_VALID`. Added in imud 1.9.1 |
 
 Assigning bit 15 used up the last of the 16-bit `flags` word, which is what
