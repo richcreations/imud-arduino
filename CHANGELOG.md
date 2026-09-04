@@ -5,6 +5,91 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-03
+
+Pins imud wire protocol **v18** (layout introduced in imud 1.10).
+
+**Compatibility — this is a required update, not an optional one.**
+1.2.0 requires **imud ≥ 1.10**; the **1.1.x** line remains correct for imud
+1.7–1.9, and **1.0.x** for imud 1.4–1.6. Daemon and sketch have to be
+updated together: `ImudParser` rejects any packet whose version word isn't
+`IMUD_VERSION`, so a mismatched pairing receives no packets at all — no
+error, no misparse, just silence and a `millisSinceLastPacket()` that climbs
+forever. There is deliberately no dual-version support, because the CRC
+offset differs between v17 and v18: a parser would have to guess the frame
+length before it could validate it, on a stream whose framing *is* the
+validation.
+
+| Daemon | Wire | ImudClient |
+|---|---|---|
+| imud 1.4–1.6 | v14 | 1.0.x |
+| imud 1.7–1.9 | v17 | 1.1.x |
+| imud ≥ 1.10 | v18 | **1.2.x** |
+
+### Added
+
+- `flags_ext` (`uint32`, offset 272) — a **second flag word**, appended
+  because `flags` had assigned all sixteen of its bits. It is entirely
+  separate from `flags`: bit 0 of one is not bit 0 of the other. One bit is
+  defined so far:
+  - `IMUD_FLAG_EXT_MAG_ABSENT` (bit 0) — no magnetometer is configured, so
+    heading is gravity-referenced only: it starts at zero in whatever
+    orientation imud booted in and dead-reckons from the gyro for the life
+    of the run. This is **not** the same as `MAG_VALID` and `MAG_UNCAL`
+    both being clear, which describes a *fitted* magnetometer that is stale
+    or failed and can recover. `MAG_ABSENT` cannot.
+
+  **Test only the bits you recognise, and never compare `flags_ext` for
+  equality.** That contract is what lets imud define a new bit here without
+  another wire-version bump, so a sketch written against this header keeps
+  working against a newer daemon.
+- `reserved` (`uint8[8]`, offset 276) — zero on the wire; do not interpret.
+  Covered by the CRC.
+- `IMUD_FLAG_MAG_UNCAL` (bit 15 of `flags`, added upstream in imud 1.9.1) —
+  heading fused from an **uncalibrated** magnetometer: offset by the
+  uncorrected hard iron, but bounded and repeatable, unlike a gyro-only
+  heading. Mutually exclusive with `IMUD_FLAG_MAG_VALID`. This needed no
+  wire change, only the constant, and was missing from 1.1.x.
+- `docs/PROTOCOL.md` gains an "Extended flags" section; `docs/GLOSSARY.md`
+  gains plain-language entries for `flags_ext`, `MAG_ABSENT` and
+  `MAG_UNCAL`; the README gains a `flags_ext` section with the correct and
+  incorrect ways to test it.
+- `tools/fake_daemon.py --mag-absent` — emit `EXT_MAG_ABSENT` with every
+  mag-derived flag dropped, so the no-compass path can be exercised from a
+  sketch without hardware.
+- Unit tests for the v18 surface: unknown `flags_ext` bits are ignored
+  rather than rejected, `flags_ext` decodes independently of `flags`,
+  `MAG_UNCAL` decodes, and every byte of the appended tail is covered by
+  the CRC.
+
+### Changed
+
+- `IMUD_VERSION` 17 → **18** and `IMUD_PACKET_SIZE` 276 → **288**.
+- `crc32` moves from offset 272 to **284**, and now covers bytes 0–283.
+  Derive that range from `offsetof(imud_packet_t, crc32)` rather than
+  hardcoding it.
+- **Every pre-existing field keeps its offset.** The bump is purely an
+  append plus the CRC move, so a decoder's existing offsets stay correct
+  and the golden vectors differ from v17's below offset 272 only in the
+  version word.
+- `IMUD_FLAG_MOTION` (bit 6) stays defined and unused. v18 was the one
+  moment it could have been reused safely, and deliberately was not,
+  because imud 1.8 published that it would not be.
+- Golden vectors in `extras/golden/` regenerated for v18.
+- `tools/fake_daemon.py` emits v18 packets.
+- No breaking API change: there are no per-field accessors, so consumers
+  read `imud.packet().flags_ext` directly.
+
+### Fixed
+
+- The fuzz seed corpus under `test/fuzz/corpus/` was excluded by the `*.hex`
+  rule in `.gitignore` and had never been committed, so CI's deterministic
+  replay gate was seeded only by the golden vectors and none of the
+  structural resync cases. The corpus is now un-ignored, and gains v18-sized
+  companions for the two cases whose whole point is the frame boundary:
+  a body that fills the buffer exactly and ends in a partial magic, and one
+  that stops just short of a full frame.
+
 ## [1.1.0] - 2026-07-26
 
 Pins imud wire protocol **v17** (layout introduced in imud 1.7).

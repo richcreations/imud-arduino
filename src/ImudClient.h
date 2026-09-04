@@ -1,8 +1,8 @@
 /*
  * ImudClient.h — Arduino client library for the imud IMU daemon
  *
- * Receives, validates, and decodes imud's 276-byte binary attitude packets
- * (wire v17) over TCP (lossless, framed) or UDP (unicast/broadcast/
+ * Receives, validates, and decodes imud's 288-byte binary attitude packets
+ * (wire v18) over TCP (lossless, framed) or UDP (unicast/broadcast/
  * multicast, higher rate). Works with any Arduino Client/UDP transport —
  * WiFiClient/WiFiUDP, EthernetClient/EthernetUDP, etc. ESP32 is the primary
  * target; the library also compiles for ESP8266, RP2040 (Pico W), and
@@ -34,7 +34,7 @@
  *
  * WIRE-SYNC WARNING
  *
- * This library pins wire v17 and rejects any other version. When imud
+ * This library pins wire v18 and rejects any other version. When imud
  * revises the packet layout it bumps the wire version, and this library
  * needs a synced struct + version update before it can talk to the new
  * daemon. See README.md for details.
@@ -90,11 +90,11 @@
  * ───────────────────────────────────────────────────────────────────────*/
 
 #define IMUD_MAGIC        0x494D5544u   /* "IMUD" */
-/* Wire-layout revision, NOT the release version. 17 = layout introduced in
- * imud 1.7. This library rejects any other value — see the wire-sync
+/* Wire-layout revision, NOT the release version. 18 = layout introduced in
+ * imud 1.10. This library rejects any other value — see the wire-sync
  * warning above and in README.md. */
-#define IMUD_VERSION      17
-#define IMUD_PACKET_SIZE  276           /* bytes, fixed */
+#define IMUD_VERSION      18
+#define IMUD_PACKET_SIZE  288           /* bytes, fixed */
 
 /* ─────────────────────────────────────────────────────────────────────────
  * Packet flags (bitmask in imud_packet_t.flags)
@@ -106,7 +106,10 @@
 #define IMUD_FLAG_ACCEL_CAL         (1u << 3)  /* accel calibration applied */
 #define IMUD_FLAG_GYRO_CAL          (1u << 4)  /* gyro bias applied */
 #define IMUD_FLAG_MAG_CAL           (1u << 5)  /* mag hard/soft-iron applied */
-#define IMUD_FLAG_MOTION            (1u << 6)  /* reserved — never set in v17 */
+#define IMUD_FLAG_MOTION            (1u << 6)  /* retired — defined, never set.
+                                                * v18 deliberately did NOT reuse
+                                                * this bit; imud 1.8 published
+                                                * that it would not. */
 #define IMUD_FLAG_FIFO_OVERFLOW     (1u << 7)  /* sample gap (FIFO overflow) */
 #define IMUD_FLAG_STARTUP           (1u << 8)  /* gyro bias est. in progress */
 #define IMUD_FLAG_SHUTDOWN          (1u << 9)  /* final packet before exit */
@@ -114,12 +117,37 @@
 #define IMUD_FLAG_HEAVE_VALID       (1u << 11) /* heave estimator settled */
 #define IMUD_FLAG_WAVE_VALID        (1u << 12) /* sea-state stats settled */
 #define IMUD_FLAG_ENGINE_ON         (1u << 13) /* engine-vibration detected */
+/* Bit 14 is assigned upstream but has no meaning published to this library. */
+#define IMUD_FLAG_MAG_UNCAL         (1u << 15) /* heading fused from an
+                                                * UNCALIBRATED mag: offset by
+                                                * uncorrected hard iron, but
+                                                * bounded and repeatable.
+                                                * Mutually exclusive with
+                                                * IMUD_FLAG_MAG_VALID. */
 
 /* ─────────────────────────────────────────────────────────────────────────
- * Wire packet — 276 bytes, little-endian, fixed size.
+ * Extended flags (bitmask in imud_packet_t.flags_ext) — a SECOND, separate
+ * flag word added in v18 because `flags` had assigned all sixteen of its
+ * bits. Bit n of flags_ext is unrelated to bit n of flags.
+ *
+ * TEST ONLY THE BITS YOU KNOW, and never compare flags_ext for equality.
+ * That contract is what lets imud define a new bit here without another
+ * wire-version bump — a sketch that ignores unrecognised bits keeps working
+ * against a newer daemon.
+ * ───────────────────────────────────────────────────────────────────────*/
+
+/* No magnetometer is configured, so heading is gravity-referenced only: it
+ * starts at zero in whatever orientation imud booted in and dead-reckons
+ * from the gyro for the life of the run. This is NOT the same as MAG_VALID
+ * and MAG_UNCAL both being clear — that is a FITTED magnetometer that is
+ * stale or failed, and it can recover. This one cannot. */
+#define IMUD_FLAG_EXT_MAG_ABSENT    (1u << 0)
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Wire packet — 288 bytes, little-endian, fixed size.
  *
  * WIRE-SYNC WARNING: this struct is copied verbatim from imud's reference
- * implementation for wire v17. imud pins this layout and only changes it on
+ * implementation for wire v18. imud pins this layout and only changes it on
  * a wire-version bump (see IMUD_VERSION above). Do not hand-edit field
  * order, types, or count without a corresponding version bump and a fresh
  * copy from the upstream reference — a mismatched struct silently decodes
@@ -211,7 +239,11 @@ typedef struct IMUD_PACKED_ATTR {
                                * covariance predicts its own spread */
     float    nis_mag;         /* same for the magnetometer update: d²/2
                                * (3-D) or d²/1 (yaw-only) */
-    uint32_t crc32;           /* IEEE 802.3 CRC32 of bytes 0–271 */
+    /* v18 additions. Every field above keeps the offset it had in v17. */
+    uint32_t flags_ext;       /* IMUD_FLAG_EXT_* bitmask — second flag word,
+                               * independent of `flags` above */
+    uint8_t  reserved[8];     /* zero on the wire; do not interpret */
+    uint32_t crc32;           /* IEEE 802.3 CRC32 of bytes 0–283 */
 } imud_packet_t;
 
 #if defined(_MSC_VER)
@@ -225,7 +257,7 @@ static_assert(sizeof(imud_packet_t) == IMUD_PACKET_SIZE,
               "imud_packet_t mis-packed");
 
 /* ─────────────────────────────────────────────────────────────────────────
- * CRC32 — IEEE 802.3 / zlib polynomial, bitwise (no table: 276 bytes at
+ * CRC32 — IEEE 802.3 / zlib polynomial, bitwise (no table: 288 bytes at
  * 240 MHz is microseconds; deliberately not pulling in a CRC library).
  * ───────────────────────────────────────────────────────────────────────*/
 
@@ -293,7 +325,7 @@ public:
     }
 
     /* Feed raw stream bytes (any chunking — one byte at a time is fine).
-     * Reassembles 276-byte frames, validating each as it completes; on
+     * Reassembles 288-byte frames, validating each as it completes; on
      * failure, resynchronizes by dropping one byte and rescanning for the
      * next magic sequence rather than discarding the whole buffer, so a
      * valid frame that starts partway through never gets lost.
@@ -322,7 +354,7 @@ public:
     }
 
     /* Feed exactly one whole UDP datagram: no reassembly, no resync — a
-     * datagram is either a valid 276-byte packet or it is discarded.
+     * datagram is either a valid 288-byte packet or it is discarded.
      * Returns true if it was accepted; packet() then holds it. */
     bool feedDatagram(const uint8_t *data, size_t len) {
         if (!validate(data, len)) {
@@ -372,7 +404,7 @@ private:
         return imud_crc32(data, offsetof(imud_packet_t, crc32)) == stored;
     }
 
-    /* Called after a full 276-byte buffer fails validation. Drops exactly
+    /* Called after a full 288-byte buffer fails validation. Drops exactly
      * one byte, then scans the remaining buffer for the next magic
      * sequence, discarding everything before it. If no full match exists,
      * retains a trailing partial match (1-3 bytes) so a magic sequence

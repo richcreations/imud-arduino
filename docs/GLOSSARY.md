@@ -177,8 +177,8 @@ it **actually** read. Small innovations mean the model is tracking reality;
 large ones mean something is off — a bad sensor reading, or an assumption
 that no longer holds.
 
-The four v17 health fields below all describe how the filter is handling its
-innovations.
+The four health fields below (added in v17, unchanged in v18) all describe
+how the filter is handling its innovations.
 
 ## Huber weight (`innov_weight`)
 
@@ -223,9 +223,38 @@ The version number of the **packet layout**, not of the library or the
 daemon. This library pins one wire version and rejects every other one, so
 that a layout change can never be silently misread as valid data.
 
-The current release speaks **wire v17** and needs **imud ≥ 1.7**. Pairing it
-with an older daemon produces no packets at all — see [the wire-sync
+The current release speaks **wire v18** and needs **imud ≥ 1.10**. Pairing
+it with an older daemon produces no packets at all — see [the wire-sync
 warning](../README.md#wire-sync-warning).
+
+## Extended flags (`flags_ext`)
+
+A second flag word, added in wire v18 because the original 16-bit `flags`
+field had run out of bits. It is entirely separate: bit 0 of `flags_ext`
+is not bit 0 of `flags`.
+
+Test individual bits and ignore the ones you don't recognise — never
+compare the whole word for equality. That is what lets the daemon add a
+flag without breaking sketches built against an older header.
+
+## Magnetometer absent (`IMUD_FLAG_EXT_MAG_ABSENT`)
+
+No compass is fitted at all, so heading comes from gravity and the gyro
+alone: it starts at zero in whatever orientation the daemon booted in and
+dead-reckons from there. It will drift, and it is not referenced to
+magnetic or true north — a relative heading, not a bearing.
+
+This is different from a magnetometer that is merely unhealthy (`MAG_VALID`
+clear, or [`IMUD_FLAG_MAG_UNCAL`](#uncalibrated-magnetometer-imud_flag_mag_uncal)
+set): those describe hardware that exists and may recover. `MAG_ABSENT`
+does not recover.
+
+## Uncalibrated magnetometer (`IMUD_FLAG_MAG_UNCAL`)
+
+Heading is fused from a magnetometer that has not been calibrated. The
+uncorrected hard-iron offset makes it *wrong by a constant*, but it is
+bounded and repeatable — unlike a gyro-only heading, it does not drift
+without limit. Mutually exclusive with `MAG_VALID`.
 
 ## CRC32
 

@@ -1,7 +1,7 @@
-# imud wire protocol v17 — field reference and parser internals
+# imud wire protocol v18 — field reference and parser internals
 
 This document is the deep-dive companion to the [README](../README.md)'s
-API reference: the full byte-level layout of the 276-byte packet, the flag
+API reference: the full byte-level layout of the 288-byte packet, the flag
 bitmask, the CRC32 definition, and a walkthrough of `ImudParser`'s
 stream-resync algorithm. It's aimed at anyone extending `ImudClient`,
 debugging a decode issue, or writing a second implementation against the
@@ -13,7 +13,7 @@ imud's own reference implementation — see the
 
 ## Framing
 
-- 276 bytes, fixed size, little-endian, naturally aligned (no implicit
+- 288 bytes, fixed size, little-endian, naturally aligned (no implicit
   padding — `__attribute__((packed))` in the struct definition is a guard
   against a future field breaking that, not a behavior change today).
 - Self-delimiting: a 4-byte magic (`"IMUD"`, `0x494D5544`, little-endian
@@ -28,7 +28,7 @@ imud's own reference implementation — see the
 | Offset | Size | Field | Type | Units / notes |
 |---:|---:|---|---|---|
 | 0 | 4 | `magic` | `uint32_t` | `IMUD_MAGIC` = `0x494D5544` |
-| 4 | 2 | `version` | `uint16_t` | `IMUD_VERSION` = 17; reject anything else |
+| 4 | 2 | `version` | `uint16_t` | `IMUD_VERSION` = 18; reject anything else |
 | 6 | 2 | `flags` | `uint16_t` | `IMUD_FLAG_*` bitmask, see below |
 | 8 | 8 | `ts_wall_ns` | `uint64_t` | `CLOCK_REALTIME`, nanoseconds |
 | 16 | 8 | `ts_tai_ns` | `uint64_t` | `CLOCK_TAI`, nanoseconds |
@@ -67,9 +67,15 @@ imud's own reference implementation — see the
 | 260 | 4 | `innov_reject` | `float` | EMA of the reject indicator: fraction of updates discarded by the gross-outlier gate; `0.0` = nothing rejected |
 | 264 | 4 | `nis_accel` | `float` | rolling normalised innovation squared for the accelerometer update, d²/2 |
 | 268 | 4 | `nis_mag` | `float` | same for the magnetometer update, d²/2 (3-D) or d²/1 (yaw-only) |
-| 272 | 4 | `crc32` | `uint32_t` | IEEE 802.3 CRC32 of bytes 0–271 |
+| 272 | 4 | `flags_ext` | `uint32_t` | `IMUD_FLAG_EXT_*` bitmask — **new in v18**, a second flag word independent of `flags` |
+| 276 | 8 | `reserved` | `uint8_t[8]` | **new in v18**; zero on the wire, do not interpret |
+| 284 | 4 | `crc32` | `uint32_t` | IEEE 802.3 CRC32 of bytes 0–283 |
 
-Total: 276 bytes.
+Total: 288 bytes.
+
+Every field below offset 272 keeps the offset it had in v17: the bump is
+purely an append plus the CRC move, so a decoder's existing offsets stay
+correct.
 
 ### Reading the gate-health and NIS fields
 
@@ -103,7 +109,7 @@ them, and the distinction matters:
 | 3 | `IMUD_FLAG_ACCEL_CAL` | accel calibration applied |
 | 4 | `IMUD_FLAG_GYRO_CAL` | gyro bias applied |
 | 5 | `IMUD_FLAG_MAG_CAL` | mag hard/soft-iron applied |
-| 6 | `IMUD_FLAG_MOTION` | reserved — never set in v17 |
+| 6 | `IMUD_FLAG_MOTION` | retired — defined but never set. v18 deliberately did not reuse this bit; imud 1.8 published that it would not |
 | 7 | `IMUD_FLAG_FIFO_OVERFLOW` | sample gap (FIFO overflow) |
 | 8 | `IMUD_FLAG_STARTUP` | gyro bias estimation in progress |
 | 9 | `IMUD_FLAG_SHUTDOWN` | final packet before clean daemon exit |
@@ -111,6 +117,35 @@ them, and the distinction matters:
 | 11 | `IMUD_FLAG_HEAVE_VALID` | heave estimator settled — gates `heave_m`/`heave_rate` |
 | 12 | `IMUD_FLAG_WAVE_VALID` | sea-state stats settled — gates `wave_*`/`roll_*`/`pitch_*` (period/amplitude) |
 | 13 | `IMUD_FLAG_ENGINE_ON` | engine-vibration detected |
+| 14 | — | assigned upstream; no meaning published to this library |
+| 15 | `IMUD_FLAG_MAG_UNCAL` | heading fused from an **uncalibrated** magnetometer — offset by the uncorrected hard iron, but bounded and repeatable. Mutually exclusive with `MAG_VALID`. Added in imud 1.9.1 |
+
+Assigning bit 15 used up the last of the 16-bit `flags` word, which is what
+forced `flags_ext` into existence in v18.
+
+## Extended flags (`flags_ext`, offset 272) — new in v18
+
+A second, **separate** flag word. Bit *n* of `flags_ext` has nothing to do
+with bit *n* of `flags`.
+
+| Bit | Name | Meaning |
+|---:|---|---|
+| 0 | `IMUD_FLAG_EXT_MAG_ABSENT` | no magnetometer is configured, so heading is gravity-referenced only: it starts at zero in whatever orientation imud booted in and dead-reckons from the gyro for the life of the run |
+
+`MAG_ABSENT` is **not** the same as `MAG_VALID` and `MAG_UNCAL` both being
+clear. That combination describes a *fitted* magnetometer that is currently
+stale or failed, and it can recover. `MAG_ABSENT` means there is no compass
+at all, and it cannot.
+
+**Test only the bits you know, and never compare `flags_ext` for equality.**
+That contract is what lets imud define a new bit here without another wire
+version bump — a receiver that ignores unrecognised bits keeps working
+against a newer daemon:
+
+```c
+if (p.flags_ext & IMUD_FLAG_EXT_MAG_ABSENT) { /* correct */ }
+if (p.flags_ext == IMUD_FLAG_EXT_MAG_ABSENT) { /* WRONG — breaks on any new bit */ }
+```
 
 ## Validation order (normative)
 
@@ -118,11 +153,12 @@ Applied in this exact order — get it right and a malformed or truncated
 packet is rejected as cheaply as possible, without ever touching
 uninitialized or attacker-controlled memory beyond the buffer bounds:
 
-1. **Size** — exactly 276 bytes.
+1. **Size** — exactly 288 bytes.
 2. **Magic** — `magic == IMUD_MAGIC` (wire bytes `44 55 4D 49`).
-3. **Version** — `version == IMUD_VERSION` (17); reject anything else.
-4. **CRC32** — computed CRC32 of bytes 0..271 equals the stored `crc32` at
-   offset 272.
+3. **Version** — `version == IMUD_VERSION` (18); reject anything else.
+4. **CRC32** — computed CRC32 of bytes 0..283 equals the stored `crc32` at
+   offset 284. Derive that range from `offsetof(imud_packet_t, crc32)`
+   rather than hardcoding it — it moved in v18 and will move again.
 
 Anything that fails any step is discarded silently and counted (never
 logged per-packet — a malicious or malfunctioning peer flooding invalid
@@ -145,7 +181,7 @@ uint32_t imud_crc32(const uint8_t *data, size_t len) {
 }
 ```
 
-276 bytes at 240 MHz is on the order of microseconds, so a table isn't
+288 bytes at 240 MHz is on the order of microseconds, so a table isn't
 worth the ~1 KB of flash — this is deliberate, not an oversight; don't
 "optimize" it into a CRC library dependency.
 
@@ -161,8 +197,8 @@ receive path for, say, a serial bridge or a captured-frame file.
 
 The core loop:
 
-1. Append each incoming byte to a 276-byte accumulation buffer.
-2. When the buffer fills (276 bytes), validate it (the four steps above).
+1. Append each incoming byte to a 288-byte accumulation buffer.
+2. When the buffer fills (288 bytes), validate it (the four steps above).
    - **Valid** → copy it out as the newest packet, empty the buffer,
      continue.
    - **Invalid** → resync (next section), which leaves the buffer holding

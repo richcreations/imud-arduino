@@ -2,7 +2,7 @@
 """fake_daemon.py — a fake imud server for client development. No hardware,
 no imud install needed; Python 3 stdlib only.
 
-Emits valid imud wire-v17 packets (276 bytes, little-endian, CRC32) with a
+Emits valid imud wire-v18 packets (288 bytes, little-endian, CRC32) with a
 slowly rotating heading, mimicking the real daemon's [stream] TCP listener
 and/or high-rate UDP output:
 
@@ -10,6 +10,7 @@ and/or high-rate UDP output:
   ./fake_daemon.py --udp 192.168.1.42:10111 # ... plus UDP unicast
   ./fake_daemon.py --udp 239.255.0.1:10111  # ... plus UDP multicast
   ./fake_daemon.py --rate 100               # packet rate (default 10 Hz)
+  ./fake_daemon.py --mag-absent             # v18 EXT_MAG_ABSENT, no compass
 
 Contract mimicked from the real server (netserv):
   - broadcast-only: the server never reads from TCP clients
@@ -32,9 +33,11 @@ import time
 import zlib
 
 MAGIC = 0x494D5544
-VERSION = 17
-PACKET_SIZE = 276
-_STRUCT = struct.Struct('<IHHQQII' + 'f' * 37 + 'I' + 'f' * 22 + 'I')
+VERSION = 18
+PACKET_SIZE = 288
+# ... 'f'*22 ends at mag_residual..nis_mag; then v18's flags_ext (I),
+# reserved[8] (8s) and crc32 (I).
+_STRUCT = struct.Struct('<IHHQQII' + 'f' * 37 + 'I' + 'f' * 22 + 'I8sI')
 assert _STRUCT.size == PACKET_SIZE
 
 FLAG_MAG_VALID = 1 << 0
@@ -47,11 +50,18 @@ FLAG_SHUTDOWN = 1 << 9
 FLAGS = (FLAG_MAG_VALID | FLAG_CONVERGED | FLAG_ACCEL_CAL | FLAG_GYRO_CAL |
          FLAG_MAG_CAL | FLAG_DECL_VALID)
 
+# v18 second flag word. Bit 0 here is unrelated to bit 0 of `flags`.
+FLAG_EXT_MAG_ABSENT = 1 << 0
+# Gravity-referenced heading only: no compass is fitted, so nothing that
+# depends on a magnetometer is claimed.
+FLAGS_NO_MAG = FLAG_CONVERGED | FLAG_ACCEL_CAL | FLAG_GYRO_CAL
+
 MAX_CLIENTS = 8
 DECLINATION = 11.25
 
 
-def make_packet(seq: int, heading: float, flags: int) -> bytes:
+def make_packet(seq: int, heading: float, flags: int,
+                flags_ext: int = 0) -> bytes:
     now = time.time_ns()
     yaw = math.radians(heading if heading < 180.0 else heading - 360.0)
     f = [0.0] * 37          # accel..cov float run; quat starts at index 18
@@ -65,14 +75,16 @@ def make_packet(seq: int, heading: float, flags: int) -> bytes:
     f[27] = 25.5            # temp_c
     tail = [0.0] * 22       # declination..nis_mag float run
     tail[0] = DECLINATION
-    # v17 gate-health/NIS block: the healthy case, so a consumer testing
-    # against this sees "filter fine", not a fault reading.
+    # v17 gate-health/NIS block (offsets unchanged in v18): the healthy
+    # case, so a consumer testing against this sees "filter fine", not a
+    # fault reading.
     tail[18] = 1.0          # innov_weight — Huber cap never engaged
     tail[19] = 0.0          # innov_reject — nothing gate-rejected
     tail[20] = 1.0          # nis_accel — covariance consistent
     tail[21] = 1.0          # nis_mag
     body = _STRUCT.pack(MAGIC, VERSION, flags, now, now + 37_000_000_000,
-                        (seq * 400) & 0xFFFFFFFF, 1, *f, seq, *tail, 0)
+                        (seq * 400) & 0xFFFFFFFF, 1, *f, seq, *tail,
+                        flags_ext, b'\x00' * 8, 0)
     body = body[:PACKET_SIZE - 4]
     return body + struct.pack('<I', zlib.crc32(body) & 0xFFFFFFFF)
 
@@ -98,7 +110,16 @@ def main() -> int:
     ap.add_argument('--udp', metavar='HOST:PORT',
                     help='also send UDP (multicast if HOST is 224.0.0.0/4)')
     ap.add_argument('--rate', type=float, default=10.0, help='Hz (default 10)')
+    ap.add_argument('--mag-absent', action='store_true',
+                    help='v18: set EXT_MAG_ABSENT and drop every mag-derived '
+                         'flag, as a daemon with no compass fitted does')
     args = ap.parse_args()
+
+    flags = FLAGS_NO_MAG if args.mag_absent else FLAGS
+    flags_ext = FLAG_EXT_MAG_ABSENT if args.mag_absent else 0
+    if args.mag_absent:
+        print('EXT_MAG_ABSENT: heading is gravity-referenced, dead-reckoned '
+              'from the gyro')
 
     listener = None
     if not args.no_tcp:
@@ -142,7 +163,7 @@ def main() -> int:
                     conn.setblocking(False)
                     clients.append(conn)
                     print(f'client {addr} connected ({len(clients)})')
-            pkt = make_packet(seq, heading, FLAGS)
+            pkt = make_packet(seq, heading, flags, flags_ext)
             tcp_broadcast(clients, pkt)
             if udp_sock:
                 udp_sock.sendto(pkt, udp_dest)
@@ -150,7 +171,7 @@ def main() -> int:
             heading = (heading + 0.5 * period) % 360.0  # 0.5 deg/s sweep
     except KeyboardInterrupt:
         print('\nshutting down: sending SHUTDOWN-flag packet')
-        pkt = make_packet(seq, heading, FLAGS | FLAG_SHUTDOWN)
+        pkt = make_packet(seq, heading, flags | FLAG_SHUTDOWN, flags_ext)
         tcp_broadcast(clients, pkt)
         if udp_sock:
             udp_sock.sendto(pkt, udp_dest)

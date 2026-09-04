@@ -26,15 +26,21 @@
 /* The wire layout must be byte-identical on every target this compiles for.
  * These are compile-time, so a 32-bit build that padded the struct
  * differently would fail here rather than silently decoding garbage. */
-static_assert(sizeof(imud_packet_t) == 276, "packet must be 276 bytes");
+static_assert(sizeof(imud_packet_t) == 288, "packet must be 288 bytes");
 static_assert(sizeof(imud_packet_t) == IMUD_PACKET_SIZE, "size constant drift");
-static_assert(offsetof(imud_packet_t, crc32) == 272, "crc32 must sit at 272");
+static_assert(offsetof(imud_packet_t, crc32) == 284, "crc32 must sit at 284");
 static_assert(offsetof(imud_packet_t, innov_weight) == 256, "v17 append offset");
 static_assert(offsetof(imud_packet_t, innov_reject) == 260, "v17 append offset");
 static_assert(offsetof(imud_packet_t, nis_accel) == 264, "v17 append offset");
 static_assert(offsetof(imud_packet_t, nis_mag) == 268, "v17 append offset");
+/* v18 appended these two before crc32; every v17 offset above is unchanged,
+ * which is the property that makes the bump append-only. */
+static_assert(offsetof(imud_packet_t, flags_ext) == 272, "v18 append offset");
+static_assert(offsetof(imud_packet_t, reserved) == 276, "v18 append offset");
+static_assert(sizeof(imud_packet_t) - offsetof(imud_packet_t, crc32) == 4,
+              "crc32 must be the last field");
 static_assert(sizeof(float) == 4, "wire format assumes 32-bit float");
-static_assert(IMUD_VERSION == 17, "wire version drift");
+static_assert(IMUD_VERSION == 18, "wire version drift");
 
 int main() {
     /* Known-answer test for the CRC. "123456789" -> 0xCBF43926 is the

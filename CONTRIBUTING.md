@@ -134,7 +134,7 @@ becomes a permanent regression case.
 
 ## Wire-sync changes
 
-This library pins **wire v17** and intentionally rejects any other
+This library pins **wire v18** and intentionally rejects any other
 version (see the [wire-sync warning](README.md#wire-sync-warning)). If
 you're updating it to track a new imud wire version:
 
@@ -175,7 +175,7 @@ you're updating it to track a new imud wire version:
    minimum daemon version and which library line still serves the old one.
    The failure mode for a mismatched pair is *silence*, not an error: the
    parser rejects every packet, so the user sees no data and no diagnostic.
-   The `[1.1.0]` entry is the pattern to follow.
+   The `[1.2.0]` entry is the pattern to follow.
 
 ## Reporting bugs
 

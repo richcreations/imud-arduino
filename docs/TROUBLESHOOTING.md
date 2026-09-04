@@ -18,7 +18,7 @@ step from that guide that got skipped.
 - [UDP: rate stays 0.0 Hz](#udp-rate-stays-00-hz)
 - [The connection drops after a while](#the-connection-drops-after-a-while)
 - [Compile error: "needs a WiFi-capable core"](#compile-error-needs-a-wifi-capable-core)
-- [Compile error: no member named nis_accel](#compile-error-no-member-named-nis_accel)
+- [Compile error: no member named flags_ext](#compile-error-no-member-named-flags_ext)
 
 ---
 
@@ -135,8 +135,8 @@ Each count is a packet that failed validation and was discarded.
   buffer when the link dropped will fail once, then resync.
 - **Steadily climbing** means either a genuinely lossy link, or — much more
   likely — a **wire version mismatch**. See
-  [no packets at all](#compile-error-no-member-named-nis_accel) below: this
-  library version pins wire v17 and needs imud ≥ 1.7.
+  [no packets at all](#compile-error-no-member-named-flags_ext) below: this
+  library version pins wire v18 and needs imud ≥ 1.10.
 - Note that a version mismatch increments `crc_err` even though the CRC
   itself was fine; the counter covers all validation failures, not just CRC.
 
@@ -197,19 +197,26 @@ that fine — it works with any `Client`/`UDP` implementation — but the
 examples are written for WiFi. Swap `WiFiClient` for `EthernetClient` and
 drop the WiFi-join code.
 
-## Compile error: no member named nis_accel
+## Compile error: no member named flags_ext
 
 You're compiling an example from this version against an older copy of
 `ImudClient.h`. The Arduino IDE keeps libraries in your sketchbook
 `libraries/` folder — an old ImudClient there will shadow the one you think
 you installed. Delete the old copy and re-install.
 
-**The related runtime trap:** this library version speaks **wire v17** and
-requires **imud ≥ 1.7**. Against an imud 1.4–1.6 daemon it receives
+**The related runtime trap:** this library version speaks **wire v18** and
+requires **imud ≥ 1.10**. Against an older daemon it receives
 *nothing at all* — no error, no packets, just silence — because every packet
-fails the version check. If you're on an older daemon, use the ImudClient
-1.0.x line instead. See [the wire-sync
-warning](../README.md#wire-sync-warning).
+fails the version check. If you're on an older daemon, install the
+ImudClient line that matches it instead:
+
+| Daemon | Wire | ImudClient |
+|---|---|---|
+| imud 1.4–1.6 | v14 | 1.0.x |
+| imud 1.7–1.9 | v17 | 1.1.x |
+| imud ≥ 1.10 | v18 | 1.2.x |
+
+See [the wire-sync warning](../README.md#wire-sync-warning).
 
 ---
 

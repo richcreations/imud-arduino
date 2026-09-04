@@ -22,12 +22,12 @@
   "@context": "https://schema.org",
   "@type": "SoftwareSourceCode",
   "name": "ImudClient",
-  "description": "Header-only Arduino client library for imud, an IMU daemon for marine and robotics navigation. Receives, validates and decodes imud's 276-byte binary attitude packets (wire v17) over TCP or UDP on ESP32-class boards, exposing heading, roll, pitch, quaternion, rate of turn, heave and sea state. Uses no heap, no String and no exceptions, in about 600 bytes of RAM.",
+  "description": "Header-only Arduino client library for imud, an IMU daemon for marine and robotics navigation. Receives, validates and decodes imud's 288-byte binary attitude packets (wire v18) over TCP or UDP on ESP32-class boards, exposing heading, roll, pitch, quaternion, rate of turn, heave and sea state. Uses no heap, no String and no exceptions, in about 600 bytes of RAM.",
   "codeRepository": "https://github.com/richcreations/imud-arduino",
   "programmingLanguage": "C++",
   "runtimePlatform": "Arduino, ESP32, ESP8266, RP2040",
   "license": "https://opensource.org/licenses/MIT",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "url": "https://richcreations.github.io/imud-arduino/",
   "author": {
     "@type": "Person",
@@ -243,9 +243,10 @@ void loop() {
 <h2>Requirements</h2>
 <div class="body">
   <div class="note warn">
-    <strong>Match the versions.</strong> ImudClient <strong>1.1.0</strong>
-    speaks imud wire&nbsp;v17 and requires <strong>imud 1.7 or newer</strong>.
-    The <strong>1.0.x</strong> line is the correct one for imud 1.4–1.6. They
+    <strong>Match the versions.</strong> ImudClient <strong>1.2.0</strong>
+    speaks imud wire&nbsp;v18 and requires <strong>imud 1.10 or newer</strong>.
+    The <strong>1.1.x</strong> line is the correct one for imud 1.7–1.9, and
+    <strong>1.0.x</strong> for imud 1.4–1.6. They
     are not interchangeable, and a mismatch fails <em>silently</em>: the parser
     rejects every packet whose version word it does not recognise, so you get
     no data and no error — just a <code>millisSinceLastPacket()</code> that
@@ -254,8 +255,8 @@ void loop() {
   </div>
 
   <p>There is deliberately no dual-version support. The CRC offset moved
-  between v14 and v17, so a parser would have to guess a frame's length before
-  it could validate it — on a stream where the framing <em>is</em> the
+  again between v17 and v18, so a parser would have to guess a frame's length
+  before it could validate it — on a stream where the framing <em>is</em> the
   validation.</p>
 
   <p><strong>Boards.</strong> ESP32 is the primary target, under both the
@@ -343,7 +344,7 @@ imud.beginUDP(udp, 10111, /*alreadyBound=*/true);</code></pre></div>
   <p>Some fields are gated by a validity flag and read <code>0.0</code> until
   it is set — heave by <code>HEAVE_VALID</code>, sea state by
   <code>WAVE_VALID</code>, true heading and declination by
-  <code>DECLINATION_VALID</code>. The full 276-byte struct and the
+  <code>DECLINATION_VALID</code>. The full 288-byte struct and the
   <code>IMUD_FLAG_*</code> bitmask are defined in
   <code>src/ImudClient.h</code>.</p>
 </div>
@@ -424,7 +425,7 @@ imud.beginUDP(udp, 10111, /*alreadyBound=*/true);</code></pre></div>
 </div>
 
 <div class="bar bottom">
-  <span>ImudClient 1.1.0</span>
+  <span>ImudClient 1.2.0</span>
   <span>2026-07-26</span>
   <span>IMUDCLIENT(3)</span>
 </div>

@@ -29,7 +29,7 @@ check fails.
 Field values are deliberately exact binary fractions (n/2^k), so a decoder
 can be compared with == after float32 decode with no epsilon. They carry
 over unchanged from the v14 vectors so a reviewer can diff old against new
-and see only the four appended fields and the CRCs move.
+and see only the appended fields, the version word and the CRCs move.
 
 To regenerate for a future wire version: update FIELDS below to match
 include/types.h, and the reference client will refuse to parse if you get
@@ -45,12 +45,13 @@ import zlib
 # ── Field values ─────────────────────────────────────────────────────────────
 #
 # Order MUST match include/types.h's imu_packet_t. The v14 values are
-# unchanged from imud-arduino 1.0.0's vectors; the four v17 fields are new.
+# unchanged from imud-arduino 1.0.0's vectors; the v17 gate-health block and
+# the v18 flags_ext/reserved tail were appended after.
 
 FIELDS = [
     # (name, struct code, value)
     ("magic",            "I", 0x494D5544),
-    ("version",          "H", 17),
+    ("version",          "H", 18),
     ("flags",            "H", 0x1C3D),
     ("ts_wall_ns",       "Q", 1753000000123456789),
     ("ts_tai_ns",        "Q", 1753000037123456789),
@@ -117,16 +118,23 @@ FIELDS = [
     ("innov_reject",     "f", 0.0),        # 0.0 = nothing rejected
     ("nis_accel",        "f", 0.9375),     # near 1.0 = covariance consistent
     ("nis_mag",          "f", 1.0625),     # slightly over 1 = mildly over-confident
+    # ── v18 additions — second flag word + reserved padding ─────────────────
+    # flags_ext is 0 here on purpose: this vector has MAG_VALID and MAG_CAL
+    # set in `flags`, so EXT_MAG_ABSENT would contradict it. The
+    # ignore-unknown-bits contract is covered by a unit test that sets bits
+    # in a copy of this packet, not by a second golden file.
+    ("flags_ext",        "I", 0),
+    ("reserved",        "8s", b"\x00" * 8),   # zero on the wire
 ]
 
-PACKET_SIZE = 276
-CRC_OFFSET  = 272
+PACKET_SIZE = 288
+CRC_OFFSET  = 284
 
 # Decoy magic planted in the resync stream: "IMUD" little-endian is
 # 44 55 4d 49 in wire order. A naive parser locks onto it and must recover.
 GARBAGE = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22,
                  0x44, 0x55, 0x4D, 0x49,       # decoy magic
-                 0x11, 0x00,                   # plausible version (17)
+                 0x12, 0x00,                   # plausible version (18)
                  0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22])
 
 
@@ -173,9 +181,9 @@ def main():
     sys.path.insert(0, str(lib))
     import imud_client as ref
 
-    if ref.IMUD_PACKET_SIZE != PACKET_SIZE or ref.IMUD_VERSION != 17:
+    if ref.IMUD_PACKET_SIZE != PACKET_SIZE or ref.IMUD_VERSION != 18:
         sys.exit(f"error: reference client is v{ref.IMUD_VERSION}/"
-                 f"{ref.IMUD_PACKET_SIZE}B, this generator targets v17/{PACKET_SIZE}B")
+                 f"{ref.IMUD_PACKET_SIZE}B, this generator targets v18/{PACKET_SIZE}B")
 
     outdir = pathlib.Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -238,7 +246,7 @@ def main():
 
 def write_md(path, vals, va, vb, stream_len):
     lines = [
-        "# Golden test vectors — imud wire packet v17 (276 bytes, little-endian)",
+        "# Golden test vectors — imud wire packet v18 (288 bytes, little-endian)",
         "",
         "Hex files: lowercase hex, 32 bytes (64 chars) per line, LF line",
         "endings. Strip whitespace and hex-decode to get the raw bytes.",
@@ -246,11 +254,12 @@ def write_md(path, vals, va, vb, stream_len):
         "Python client (`lib/imud_client.py` `_parse()`) — see",
         "`tools/gen_vectors.py`.",
         "",
-        "**Changed from v14:** four float32 fields are appended after",
-        "`mag_residual` (`innov_weight`, `innov_reject`, `nis_accel`,",
-        "`nis_mag`), so the packet grows 260 → 276 bytes and `crc32` moves",
-        "from offset 256 to **272**, now covering bytes 0–271. Every other",
-        "field keeps its offset and value.",
+        "**Changed from v17:** `uint32 flags_ext` (offset 272) and",
+        "`uint8 reserved[8]` (offset 276) are appended before `crc32`, so the",
+        "packet grows 276 → 288 bytes and `crc32` moves from offset 272 to",
+        "**284**, now covering bytes 0–283. Every other field keeps its",
+        "offset and value; only the version word (17 → 18) and the CRCs",
+        "differ in the first 272 bytes.",
         "",
         "## valid_packet.hex — one valid packet",
         "",
@@ -265,14 +274,19 @@ def write_md(path, vals, va, vb, stream_len):
             lines.append(f"{name:<18} = {v}  (0x{v:08X})")
         elif name == "flags":
             lines.append(f"{name:<18} = {v}  (0x{v:04X})")
+        elif name == "flags_ext":
+            lines.append(f"{name:<18} = {v}  (0x{v:08X}, no bits set)")
+        elif code == "8s":
+            lines.append(f"{name:<18} = {' '.join(f'{b:02x}' for b in v)}")
         elif code == "f":
             lines.append(f"{name:<18} = {v!r}")
         else:
             lines.append(f"{name:<18} = {v}")
     c = vals["crc32"]
     lines += [
-        f"{'crc32':<18} = {c}  (0x{c:08X}, stored little-endian at offset 272;",
-        f"{'':<20} IEEE 802.3 CRC32 of bytes 0..271)",
+        f"{'crc32':<18} = {c}  (0x{c:08X}, stored little-endian at offset "
+        f"{CRC_OFFSET};",
+        f"{'':<20} IEEE 802.3 CRC32 of bytes 0..{CRC_OFFSET - 1})",
         "```",
         "",
         "Derived expectations:",
@@ -296,7 +310,7 @@ def write_md(path, vals, va, vb, stream_len):
         f"Layout ({stream_len} bytes total):",
         f"- bytes 0..{len(GARBAGE) - 1}: {len(GARBAGE)} bytes of garbage. A DECOY magic",
         "  sequence (44 55 4d 49) sits at offset 7, followed by a plausible",
-        "  version (11 00 = 17) — a parser will false-lock there and must",
+        "  version (12 00 = 18) — a parser will false-lock there and must",
         "  recover via CRC failure + rescan (drop one byte, scan for the next",
         "  magic; never discard the whole buffer).",
         f"- bytes {len(GARBAGE)}..{len(GARBAGE) + PACKET_SIZE - 1}: valid frame A "

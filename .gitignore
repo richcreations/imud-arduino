@@ -6,10 +6,19 @@
 # Arduino IDE
 *.hex
 !extras/golden/*.hex
+# The fuzz seed corpus is source, not build output. Without this the `*.hex`
+# rule above silently excludes it, and CI's deterministic replay gate runs
+# with only the golden vectors as seeds.
+!test/fuzz/corpus/*.hex
 build/
 imud-handoff-wire17
+__pycache__/
+
 # Editors
 .vscode/
 .idea/
 *.swp
 .DS_Store
+
+# Agent tooling
+CLAUDE.md

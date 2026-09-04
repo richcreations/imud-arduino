@@ -226,6 +226,7 @@ then they read `0.0`. Terms are defined in
 | Field | Meaning | Good value |
 |---|---|---|
 | `flags` | `IMUD_FLAG_*` bitmask — see below | — |
+| `flags_ext` | `IMUD_FLAG_EXT_*` bitmask, **new in v18** — a second, separate flag word | — |
 | `imu_seq` | monotonic sample counter; gaps = dropped samples | increments by 1 |
 | `cov[9]` | 3×3 attitude error covariance, row-major | smaller = more confident |
 | `mag_anomaly` | nearby-metal indicator | near `0.0` |
@@ -242,6 +243,7 @@ Frequently used flags — the full list is in
 | `IMUD_FLAG_FUSION_CONVERGED` | filter has settled — **don't trust attitude before this** |
 | `IMUD_FLAG_DECLINATION_VALID` | declination known; gates `trueHeading()` |
 | `IMUD_FLAG_MAG_VALID` | magnetometer healthy and calibrated |
+| `IMUD_FLAG_MAG_UNCAL` | heading from an **uncalibrated** mag: offset by hard iron, but bounded and repeatable. Mutually exclusive with `MAG_VALID` |
 | `IMUD_FLAG_HEAVE_VALID` / `IMUD_FLAG_WAVE_VALID` | heave / sea-state estimators settled |
 | `IMUD_FLAG_SHUTDOWN` | daemon's final packet before a clean exit |
 
@@ -250,7 +252,33 @@ if (p.flags & IMUD_FLAG_FUSION_CONVERGED)
     display.show(p.heading_deg);
 ```
 
-For byte offsets and the full 276-byte layout, see
+#### `flags_ext` — the second flag word (v18)
+
+`flags` used up all sixteen of its bits, so v18 added a separate 32-bit
+word. The two are unrelated: bit 0 of `flags_ext` is not bit 0 of `flags`.
+One bit is defined so far:
+
+| Flag | Meaning |
+|---|---|
+| `IMUD_FLAG_EXT_MAG_ABSENT` | no magnetometer is fitted at all — heading is gravity-referenced only, starting at zero in the orientation imud booted in and dead-reckoning from the gyro. Not a bearing, and it will drift |
+
+`MAG_ABSENT` is not the same as an unhealthy compass: `MAG_VALID` clear (or
+`MAG_UNCAL` set) describes hardware that exists and may recover, and this
+does not.
+
+**Test the bits you know and ignore the rest** — never compare `flags_ext`
+for equality. That is what lets imud define a new bit without another wire
+bump, so a sketch written today keeps working against a newer daemon:
+
+```cpp
+if (p.flags_ext & IMUD_FLAG_EXT_MAG_ABSENT)   // correct
+    display.showRelativeHeading(p.heading_deg);
+
+if (p.flags_ext == IMUD_FLAG_EXT_MAG_ABSENT)  // WRONG — breaks on any new bit
+    ;
+```
+
+For byte offsets and the full 288-byte layout, see
 [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## API reference
@@ -287,15 +315,15 @@ cover (e.g. a custom transport, or a file of captured frames).
 
 | Method | Description |
 |---|---|
-| `size_t feed(const uint8_t *data, size_t len)` | Streaming path (TCP): any chunking, one byte at a time is fine. Reassembles 276-byte frames and validates each as it completes; on failure, resynchronizes by dropping one byte and rescanning for the next magic sequence rather than discarding the whole buffer. Returns the count of **new** valid packets decoded this call. |
-| `bool feedDatagram(const uint8_t *data, size_t len)` | Datagram path (UDP): no reassembly, no resync — a datagram is either a valid 276-byte packet or it's discarded. |
+| `size_t feed(const uint8_t *data, size_t len)` | Streaming path (TCP): any chunking, one byte at a time is fine. Reassembles 288-byte frames and validates each as it completes; on failure, resynchronizes by dropping one byte and rescanning for the next magic sequence rather than discarding the whole buffer. Returns the count of **new** valid packets decoded this call. |
+| `bool feedDatagram(const uint8_t *data, size_t len)` | Datagram path (UDP): no reassembly, no resync — a datagram is either a valid 288-byte packet or it's discarded. |
 | `const imud_packet_t &packet() const` | Newest valid packet. |
 | `uint32_t packetsReceived() / crcErrors() / resyncs() const` | Same semantics as on `ImudClient`. |
 | `void reset()` | Drops the partial accumulation buffer and resets all counters. Does **not** clear `packet()`. |
 
 ### `imud_packet_t` and flags
 
-The full 276-byte wire struct (accel/gyro/mag, quaternion, pitch/roll/yaw,
+The full 288-byte wire struct (accel/gyro/mag, quaternion, pitch/roll/yaw,
 heading, rate of turn, covariance, heave, sea state, compass health, filter
 gate health, …) and
 the `IMUD_FLAG_*` bitmask are defined in `src/ImudClient.h`.
@@ -353,7 +381,7 @@ Serial.println(imud_rad_to_deg(p.roll));   // e.g. -7.2
 **TCP** (`[stream]` listener, default `:10112`, default 100 Hz):
 
 - Broadcast-only: the daemon never reads from a client connection and never
-  sends anything but whole 276-byte frames back-to-back. `ImudClient` never
+  sends anything but whole 288-byte frames back-to-back. `ImudClient` never
   writes to the connection.
 - Max 8 clients. A 9th connection is accepted, then immediately closed —
   **EOF right after connect means "server full."** `poll()`'s
@@ -372,7 +400,7 @@ Serial.println(imud_rad_to_deg(p.roll));   // e.g. -7.2
 
 **UDP** (default `:10111`, up to 500 Hz):
 
-- Every datagram is exactly one 276-byte packet; `ImudClient` drops
+- Every datagram is exactly one 288-byte packet; `ImudClient` drops
   oversized/undersized ones without reading them.
 - Default daemon destination is multicast `239.255.0.1` — see
   [UDP multicast](#udp-multicast) above for joining. Unicast and broadcast
@@ -455,7 +483,7 @@ there's nothing for it to autodetect.
 
 ## Wire-sync warning
 
-This library pins **wire v17** and rejects any other version outright (see
+This library pins **wire v18** and rejects any other version outright (see
 [Protocol semantics](#protocol-semantics) and `docs/PROTOCOL.md`). When
 imud revises its packet layout, it bumps the wire version — and this
 library needs a synced struct plus a version bump before it can talk to
