@@ -113,7 +113,13 @@ void loop() {
 
             /* heading_deg is ALREADY in degrees and is MAGNETIC heading —
              * relative to magnetic north, not true north. pitch/roll/yaw
-             * are in RADIANS, so convert them with imud_rad_to_deg(). */
+             * are in RADIANS, so convert them with imud_rad_to_deg().
+             *
+             * One caveat this sketch deliberately does not handle: if the
+             * daemon has no magnetometer configured it sets
+             * IMUD_FLAG_EXT_MAG_ABSENT, and then heading_deg is not a
+             * bearing at all — it starts at zero in whatever orientation
+             * imud booted in and drifts. TcpBasic shows how to check. */
             Serial.printf("heading %6.1f deg   pitch %6.1f deg   roll %6.1f deg\n",
                           p.heading_deg,
                           imud_rad_to_deg(p.pitch),

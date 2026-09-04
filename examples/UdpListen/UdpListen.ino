@@ -22,6 +22,9 @@
  *
  *   python3 tools/fake_daemon.py --udp 239.255.0.1:10111 --rate 100
  *
+ * Add --mag-absent to that command to see the no-compass case, where the
+ * heading below is NOT a bearing — the hdg_src field reports it.
+ *
  * Copyright (c) 2026 Richard Simpson
  * SPDX-License-Identifier: MIT
  */
@@ -95,6 +98,22 @@ void setup() {
     lastReport = millis();
 }
 
+/* What the printed heading actually is — wire v18 made this knowable.
+ * "none" means no compass is fitted, so the heading is relative to whatever
+ * orientation the daemon booted in and drifts; it is not a bearing.
+ *
+ * flags_ext is tested bit by bit and never compared for equality, which is
+ * what lets imud add an extended flag later without breaking this sketch. */
+static const char *headingSource(const imud_packet_t &p) {
+    if (p.flags_ext & IMUD_FLAG_EXT_MAG_ABSENT)
+        return "none ";
+    if (p.flags & IMUD_FLAG_MAG_VALID)
+        return "mag  ";
+    if (p.flags & IMUD_FLAG_MAG_UNCAL)
+        return "uncal";   // uncalibrated: offset by hard iron, but repeatable
+    return "stale";       // fitted but unhealthy — unlike "none", it can recover
+}
+
 void loop() {
     imud.poll();  // drains every pending datagram; packet() holds the newest
 
@@ -119,10 +138,10 @@ void loop() {
             // are radians, so convert. See docs/GLOSSARY.md.
             Serial.printf("rate=%5.1f Hz  seq=%-8lu hdg=%6.1fdeg  "
                           "pitch=%6.1fdeg  roll=%6.1fdeg  yaw=%6.1fdeg  "
-                          "total=%lu  crc_err=%lu  resyncs=%lu\n",
+                          "hdg_src=%s  total=%lu  crc_err=%lu  resyncs=%lu\n",
                           rateHz, (unsigned long)p.imu_seq, p.heading_deg,
                           imud_rad_to_deg(p.pitch), imud_rad_to_deg(p.roll),
-                          imud_rad_to_deg(p.yaw),
+                          imud_rad_to_deg(p.yaw), headingSource(p),
                           (unsigned long)total, (unsigned long)imud.crcErrors(),
                           (unsigned long)imud.resyncs());
         }

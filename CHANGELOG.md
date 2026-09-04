@@ -90,6 +90,14 @@ validation.
 - `tools/fake_daemon.py` emits v18 packets.
 - No breaking API change: there are no per-field accessors, so consumers
   read `imud.packet().flags_ext` directly.
+- `examples/TcpBasic` and `examples/UdpListen` gain a `hdg_src` field
+  reporting what the printed heading actually is — `mag` (calibrated
+  compass), `uncal` (fitted but uncalibrated), `stale` (fitted, currently
+  unhealthy, may recover) or `none` (`EXT_MAG_ABSENT`: no compass at all, so
+  the heading is relative and drifting rather than a bearing). Both
+  demonstrate the bit-test-never-equality contract on `flags_ext`. TcpBasic
+  additionally reports `RESET` for `STATE_RESET`. `examples/HelloAttitude`
+  stays deliberately minimal and only notes the caveat in a comment.
 
 ### Fixed
 

@@ -22,6 +22,8 @@
  * Then set IMUD_HOST below to that machine's IP address. Try stopping and
  * restarting fake_daemon.py while the sketch runs to see the reconnect
  * logic recover, and Ctrl-C it to see the SHUTDOWN-flag packet reported.
+ * Add --mag-absent to see the no-compass case, where the heading this
+ * sketch prints is NOT a bearing (see headingSource() below).
  *
  * Copyright (c) 2026 Richard Simpson
  * SPDX-License-Identifier: MIT
@@ -64,6 +66,28 @@ void connectWiFi() {
         Serial.print('.');
     }
     Serial.printf("\nWiFi connected, IP = %s\n", WiFi.localIP().toString().c_str());
+}
+
+/* Where the printed heading actually comes from — which wire v18 made it
+ * possible to know. A display that shows a bearing without checking this can
+ * be showing a number that is not a bearing at all.
+ *
+ * Note how flags_ext is tested: bit by bit, NEVER compared for equality.
+ * That is the contract that lets imud define a new extended flag without
+ * another wire-version bump, and it is what keeps this sketch working
+ * against a daemon newer than the header it was built against. */
+static const char *headingSource(const imud_packet_t &p) {
+    if (p.flags_ext & IMUD_FLAG_EXT_MAG_ABSENT)
+        return "none ";   // no compass fitted at all: heading starts at zero
+                          // wherever the daemon booted and dead-reckons from
+                          // the gyro. Relative, drifting, and NOT a bearing.
+    if (p.flags & IMUD_FLAG_MAG_VALID)
+        return "mag  ";   // calibrated, healthy compass: a real magnetic bearing
+    if (p.flags & IMUD_FLAG_MAG_UNCAL)
+        return "uncal";   // compass with no calibration: offset by the
+                          // uncorrected hard iron, but bounded and repeatable
+    return "stale";       // a compass IS fitted but is unhealthy right now —
+                          // unlike "none", this one can come back
 }
 
 void setup() {
@@ -116,16 +140,26 @@ void loop() {
             else
                 Serial.print("true_hdg=   n/a  ");
 
+            // hdg_src:   what the heading above actually is — see
+            //            headingSource(). "none" means no compass is fitted,
+            //            so it is a relative, drifting number, not a bearing.
             // converged: the filter has settled — don't trust attitude before
             //            this reads yes.
+            // RESET:     the filter found a non-finite value in its own state
+            //            and restarted. Latched until it reconverges, so it
+            //            appears alongside converged=no rather than blinking
+            //            past for a single packet.
             // crc_err:   packets that failed validation. A few during a
             //            reconnect is normal; a steadily climbing count means
             //            a genuinely bad link (or a wire-version mismatch).
             // resyncs:   times the parser had to hunt for the next frame
             //            boundary after a bad packet. Expect 0 on a healthy
             //            TCP link; it rises alongside crc_err, not on its own.
-            Serial.printf("converged=%s  pkts=%lu crc_err=%lu resyncs=%lu\n",
+            Serial.printf("hdg_src=%s converged=%s%spkts=%lu crc_err=%lu "
+                          "resyncs=%lu\n",
+                          headingSource(p),
                           (p.flags & IMUD_FLAG_FUSION_CONVERGED) ? "yes" : "no ",
+                          (p.flags & IMUD_FLAG_STATE_RESET) ? "  RESET  " : "  ",
                           (unsigned long)imud.packetsReceived(),
                           (unsigned long)imud.crcErrors(),
                           (unsigned long)imud.resyncs());
